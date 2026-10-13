@@ -292,3 +292,19 @@ def test_json_that_is_no_probe_file_is_an_answer_not_an_exception(write, text, s
 def test_json_form_nested_beyond_reason_is_an_answer_not_an_exception(write):
     parsed = ib.parse_ltx_file(write("top.ltx", '{"ltx_root": ' + "[" * 100000))
     assert parsed["error"].startswith("Failed to parse LTX") and parsed["probes"] == []
+
+
+# ---------------------------------------------------------------- a file too large to be a probe file
+@pytest.mark.parametrize("text", [TWO_CORES, TWO_CORES_JSON])
+def test_probe_file_above_the_size_that_is_read_is_refused(write, monkeypatch, text):
+    path = write("top.ltx", text)
+    monkeypatch.setattr(ib, "MAX_LTX_BYTES", len(text))  # as large as the file: that is read
+    assert len(ib.parse_ltx_file(path)["probes"]) == 2
+    monkeypatch.setattr(ib, "MAX_LTX_BYTES", len(text) - 1)
+    assert ib.parse_ltx_file(path) == {
+        "error": "Failed to parse LTX: the file has %d bytes: a probe file is read up to %d bytes (0 MB)" % (
+            len(text), len(text) - 1), "cores": [], "probes": []}
+
+
+def test_probe_files_are_read_up_to_64_mb_by_the_gui_and_by_check():
+    assert ib.MAX_LTX_BYTES == ib.driver().MAX_LTX_BYTES == 64 << 20

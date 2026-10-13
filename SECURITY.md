@@ -50,7 +50,9 @@ that is a vulnerability and in scope:
 Known gaps:
 
 - The hook mode hands `hardware.core_filter` to xsct through `cmd /c` as it is written.
-- A capture or probe file is read into memory whole, without a size limit.
+
+A capture file is read a piece at a time, and one that holds more than 2 GB of text is refused (for a `.csv.gz`
+or a `.ila`: the text it unpacks to). A probe file is read whole, and only up to 64 MB.
 
 ### Network
 

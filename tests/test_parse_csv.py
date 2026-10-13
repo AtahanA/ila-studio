@@ -8,6 +8,10 @@ import os
 import pytest
 
 import ila_bridge as ib
+import ila_capture as ic
+
+# every test here twice: with the capture files read as shipped, and in pieces of a few characters and one row
+pytestmark = pytest.mark.usefixtures("pieces")
 
 HEAD = "Sample in Buffer,Sample in Window,TRIGGER,"
 THREE = HEAD + "top/en,top/x[7:0]\n0,0,0,1,5\n1,1,1,0,200\n2,2,0,1,7\n"
@@ -76,6 +80,34 @@ def test_thinning_does_not_hide_that_a_bus_is_signed(write):
     # the only negative value is in a sample that is not displayed
     assert bus(write, "top/x[7:0]", ["1", "-2", "3", "4", "5"], max_samples=2) == {
         "name": "x", "fullName": "top/x[7:0]", "width": 8, "isBus": True, "values": [1, 4], "signed": True}
+
+
+def test_trigger_and_sign_are_found_wherever_they_are_in_a_long_capture(write):
+    # 300 samples of which 3 are displayed; the trigger and the only negative value are among the others
+    rows = "".join("%d,%d,%d,%s\n" % (i, i, i == 250, "-2" if i == 275 else "3") for i in range(300))
+    parsed = ib.parse_csv_capture(write("cap.csv", HEAD + "top/x[7:0]\n" + rows), max_samples=3)
+    assert (parsed["totalSamples"], parsed["step"], parsed["sampleIndices"]) == (300, 100, [0, 100, 200])
+    assert parsed["triggerSample"] == 250
+    assert parsed["signals"] == [
+        {"name": "x", "fullName": "top/x[7:0]", "width": 8, "isBus": True, "values": [3, 3, 3], "signed": True}]
+
+
+def test_display_does_not_hold_the_capture(write, held, long_capture):
+    parsed, most = held(ib.parse_csv_capture, write("cap.csv", long_capture), 100)
+    assert (parsed["totalSamples"], parsed["step"], parsed["displayedSamples"]) == (4000, 40, 100)
+    assert parsed["triggerSample"] == 7                  # a sample that is not displayed
+    assert parsed["signals"][1]["values"][:3] == [0, 120, 240]       # bus_0 is 3 * the sample: samples 0, 40, 80
+    # read whole - one text, then a list of rows of cells - it is twelve times its own size in memory
+    assert most < 3 * len(long_capture)
+
+
+@pytest.mark.parametrize("name", ["cap.csv", "cap.csv.gz", "cap.ila"])
+def test_capture_that_holds_more_text_than_is_read_is_an_answer_not_an_exception(write, monkeypatch, name):
+    monkeypatch.setattr(ic, "MAX_CAPTURE_BYTES", len(THREE) - 1)
+    error = ib.parse_csv_capture(write(name, THREE))["error"]
+    assert error.startswith("Not a readable ILA capture: ")
+    assert error.endswith("%s: the capture holds more than %d bytes of text (0 MB), and no more than that is read"
+                          % (name, len(THREE) - 1))
 
 
 def test_file_without_samples_is_an_answer_not_an_exception(write):

@@ -5,10 +5,14 @@
 hex or decimal, so the driver infers it per column; it then writes hex as decimal, or each probe in the format
 asked for."""
 import os
+import zipfile
 
 import pytest
 
 import ila_capture as ic
+
+# every test here twice: with the capture files read as shipped, and in pieces of a few characters and one row
+pytestmark = pytest.mark.usefixtures("pieces")
 
 HEAD = "Sample in Buffer,Sample in Window,TRIGGER,"
 HEX = HEAD + "top/x[7:0]\n0,0,0,0a\n1,1,1,ff\n"         # the bus as Vivado exports it by default
@@ -222,3 +226,101 @@ def test_gzipped_capture_is_rewritten_in_the_formats_asked_for(write):
     path = write("cap.csv.gz", DEC)
     assert ic.ila_csv_format(path, {"x": "hex"}) == {"x[7:0]": "hex"}
     assert ic.read_ila_text(path) == HEAD + "top/x[7:0]\n0,0,0,0x0A\n1,1,1,0xFF\n"
+
+
+# ---------------------------------------------------------------- a capture is read as a stream
+RADIX_ROW = HEAD + "top/x[7:0]\nRadix - UNSIGNED,UNSIGNED,UNSIGNED,HEX\n"       # newer Vivado versions write one
+
+
+@pytest.mark.parametrize("name", ["cap.csv", "cap.csv.gz", "cap.ila"])
+def test_first_sample_is_found_in_every_file_kind_and_behind_a_radix_row(write, name):
+    assert ic.has_data_rows(write(name, RADIX_ROW + "0,0,0,0a\n1,1,1,ff\n"))
+    assert not ic.has_data_rows(write("empty_" + name, RADIX_ROW))
+
+
+def test_file_is_read_no_further_than_its_first_sample_to_know_that_it_has_one(tmp_path, monkeypatch):
+    monkeypatch.setattr(ic, "CHUNK_BYTES", 64)
+    path = tmp_path / "cap.csv"
+    # a hundred samples, and behind them bytes that no reader of a capture takes
+    path.write_bytes((HEX + "2,2,0,00\n" * 100).encode("ascii") + b"\xff\xfe")
+    assert ic.has_data_rows(str(path))
+    with pytest.raises(ValueError):
+        ic.load_ila(str(path))
+
+
+def test_capture_of_any_size_has_samples(write, monkeypatch):
+    # the limit on what is read is for reading a capture; to know that it has samples takes its first lines
+    monkeypatch.setattr(ic, "MAX_CAPTURE_BYTES", 10)
+    for name in ("cap.csv", "cap.csv.gz", "cap.ila"):
+        assert ic.has_data_rows(write(name, HEX))
+
+
+def test_statistics_do_not_hold_the_capture(write, held, long_capture):
+    path = write("cap.csv", long_capture)
+    st, most = held(ic.stats_of, path, {"mode": "magnitude", "value_probe": "bus_1", "valid_probe": "en",
+                                        "ctrl_probes": ["en"], "event_probes": ["en"]})
+    assert (st["rows"], st["n"], st["radix"], st["ctrl"], st["n_en"]) == (4000, 2000, "hex", "en=01", 2000)
+    # read whole - one text, then a list of rows of cells - it is twelve times its own size in memory
+    assert most < 3 * len(long_capture)
+
+
+@pytest.mark.parametrize("name", ["cap.csv", "cap.csv.gz"])
+def test_rewriting_does_not_hold_the_capture(write, held, long_capture, name):
+    path = write(name, long_capture)
+    columns, most = held(ic.ila_csv_to_decimal, path)
+    assert len(columns) == 30 and most < 3 * len(long_capture)
+    lines = ic.read_ila_text(path).split("\n")
+    assert len(lines) == 4002 and lines[0] == long_capture.split("\n")[0]
+    assert lines[4000] == "3999,3999,0,1," + ",".join(str(3999 * (i + 3) & 0xFFFF) for i in range(30))
+    rewritten, most = held(ic.ila_csv_format, path, {"bus_1": "hex", "bus_20": "signed"})
+    assert rewritten == {"bus_1[15:0]": "hex", "bus_20[15:0]": "signed"} and most < 3 * len(long_capture)
+    sample = ic.read_ila_text(path).split("\n")[1501].split(",")
+    # sample 1500: bus_0 is 3 * 1500, bus_1 is 4 * 1500 = 0x1770, bus_20 is 23 * 1500 = 34500, as 16 bits signed
+    assert (sample[0], sample[4], sample[5], sample[24]) == ("1500", "4500", "0x1770", "-31036")
+
+
+def test_timeline_does_not_hold_the_capture(write, held, long_capture):
+    prof = ic.load_profile(None)
+    prof["stats"]["event_probes"] = ["en"]
+    summary, most = held(ic.capture_summary, write("cap.csv", long_capture), prof)
+    # en rises at every odd sample: first at sample 1, six samples before the trigger at sample 7
+    assert (summary["n_rows"], summary["en_n"], summary["en_first"]) == (4000, 2000, -6)
+    assert most < 3 * len(long_capture)
+
+
+# ---------------------------------------------------------------- a capture that is too large to be one
+@pytest.mark.parametrize("name", ["cap.csv", "cap.csv.gz", "cap.ila"])
+def test_capture_that_holds_more_text_than_is_read_is_refused(write, monkeypatch, name):
+    path = write(name, HEX)
+    monkeypatch.setattr(ic, "MAX_CAPTURE_BYTES", len(HEX))      # as much as it holds: that is read
+    assert ic.read_ila_text(path) == HEX
+    monkeypatch.setattr(ic, "MAX_CAPTURE_BYTES", len(HEX) - 1)
+    said = "%s: the capture holds more than %d bytes of text" % (name, len(HEX) - 1)
+    for read in (ic.read_ila_text, ic.load_ila, lambda p: ic.stats_of(p, {"mode": "none"}),
+                 lambda p: ic.ila_csv_to_decimal(p, p + ".csv"),
+                 lambda p: ic.ila_csv_format(p, {"x": "hex"}, p + ".csv")):
+        with pytest.raises(ValueError, match=said):
+            read(path)
+    assert not os.path.exists(path + ".csv") and not os.path.exists(path + ".csv.tmp")
+
+
+def test_archive_is_refused_for_the_size_it_states_before_any_of_it_is_unpacked(tmp_path, monkeypatch):
+    path = str(tmp_path / "cap.ila")
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("waveform.csv", HEX + "2,2,0,00\n" * 100000)         # 0.9 MB of text in an archive of a few KB
+    assert os.path.getsize(path) < 10000
+    monkeypatch.setattr(ic, "MAX_CAPTURE_BYTES", 500000)
+    monkeypatch.setattr(ic.zipfile.ZipFile, "open", lambda *args, **kw: pytest.fail("the archive was unpacked"))
+    with pytest.raises(ValueError, match="holds more than 500000 bytes of text"):
+        ic.read_ila_text(path)
+
+
+@pytest.mark.parametrize("name", ["cap.csv", "cap.csv.gz", "cap.ila"])
+def test_text_without_line_ends_is_no_capture(write, monkeypatch, name):
+    monkeypatch.setattr(ic, "CHUNK_BYTES", 16)
+    monkeypatch.setattr(ic, "MAX_LINE_CHARS", 100)
+    path = write(name, HEAD + "top/x[7:0]\n" + "0,0,0,0a," * 50)
+    for read in (ic.load_ila, lambda p: ic.ila_csv_to_decimal(p, p + ".csv")):
+        with pytest.raises(ValueError, match="a line of more than 100 characters: this is no ILA CSV"):
+            read(path)
+    assert not ic.has_data_rows(path)

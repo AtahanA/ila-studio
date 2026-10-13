@@ -3,6 +3,7 @@
 
 """Fixtures shared by the tests. No test needs Vivado, a board or a network: the files a test reads are written
 into pytest's tmp_path first, and where the driver would start Vivado a recorder takes its place."""
+import gc
 import glob
 import gzip
 import os
@@ -10,6 +11,7 @@ import re
 import shutil
 import sys
 import time
+import tracemalloc
 import types
 import zipfile
 
@@ -46,6 +48,48 @@ def write(tmp_path):
                 f.write(text.encode("utf-8"))
         return path
     return write_file
+
+
+@pytest.fixture(params=["as shipped", "in small pieces"])
+def pieces(request, monkeypatch):
+    """A test that uses this runs twice: with the sizes the driver ships with - a capture file is read a MB at a
+    time and worked on 2048 rows at a time, which is more than any file of the tests holds - and with sizes so
+    small that every file is many pieces and every sample a block of its own. A result must not depend on where
+    a piece ends."""
+    if request.param == "in small pieces":
+        monkeypatch.setattr(ila_capture, "CHUNK_BYTES", 7)
+        monkeypatch.setattr(ila_capture, "KNOWN_VALUES", 1)
+        monkeypatch.setattr(ila_capture.blocks, "__defaults__", (1,))
+    return request.param
+
+
+@pytest.fixture(scope="session")
+def long_capture():
+    """The text of a capture of 4000 samples: the sample numbers, TRIGGER at sample 7, a 1-bit probe and 30
+    buses of 16 bits in hex, as Vivado exports them by default. 0.6 MB, which a reader that is given small
+    pieces to work with (see held) must not hold whole."""
+    buses = ",".join("top/u1/bus_%d[15:0]" % i for i in range(30))
+    return "Sample in Buffer,Sample in Window,TRIGGER,top/en," + buses + "\n" + "".join(
+        "%d,%d,%d,%d,%s\n" % (k, k, k == 7, k & 1, ",".join("%04x" % (k * (i + 3) & 0xFFFF) for i in range(30)))
+        for k in range(4000))
+
+
+@pytest.fixture
+def held(monkeypatch):
+    """held(f, *args) runs f(*args) with the driver reading 16 KB, working on 64 rows and remembering 64 values
+    of a column at a time, and returns (what f returned, the most bytes Python held at any one moment while it
+    ran)."""
+    def measure(f, *args):
+        monkeypatch.setattr(ila_capture, "CHUNK_BYTES", 1 << 14)
+        monkeypatch.setattr(ila_capture, "KNOWN_VALUES", 64)
+        monkeypatch.setattr(ila_capture.blocks, "__defaults__", (64,))
+        gc.collect()
+        tracemalloc.start()
+        try:
+            return f(*args), tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+    return measure
 
 
 # What the Tcl side answers to the commands whose answer the driver reads (see scripts/vivado_ila_repl.tcl).

@@ -32,7 +32,7 @@ All CSVs this tool writes are decimal: multi-bit probes as unsigned decimal, 1-b
 Needs Python 3.8+. The Xilinx tools are launched through cmd /c on Windows and directly elsewhere; only the
 Windows path has been exercised.
 """
-import argparse, concurrent.futures, copy, csv, datetime, glob, gzip, json, math, os, queue, re, shutil, statistics, subprocess, sys, tempfile, threading, time, zipfile
+import argparse, concurrent.futures, contextlib, copy, csv, datetime, glob, gzip, itertools, json, math, os, queue, re, shutil, statistics, subprocess, sys, tempfile, threading, time, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -250,12 +250,22 @@ class Repl:
         finally:
             self.q.put(None)                    # always: a waiting cmd() must learn that nothing more will come
 
+    def _line(self, deadline):
+        """The next line of the process; queue.Empty when none has come by the deadline (time.monotonic()). The
+        clock is looked at before every line, not only when none comes: a process that keeps printing - a
+        Vivado that repeats a message, a script of one's own that loops with output - would otherwise never
+        run out of time, each line buying it a little more."""
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise queue.Empty
+        return self.q.get(timeout=left)
+
     def _wait_ready(self, timeout=180):
-        deadline = time.time() + timeout
+        deadline = time.monotonic() + timeout
         tail = []
         while True:
             try:
-                line = self.q.get(timeout=max(0.1, deadline - time.time()))
+                line = self._line(deadline)
             except queue.Empty:
                 raise RuntimeError(f"{self.name} did not print @@READY within {timeout} s") from None
             if line is None:
@@ -270,6 +280,8 @@ class Repl:
         # A timeout is raised as RuntimeError like every other failure, so callers need one except clause, and
         # the process is marked dead: after a timeout the unread reply would be handed to the NEXT command,
         # which silently shifts every later answer by one.
+        # timeout: seconds for the whole command, from the moment it is sent to the end of its answer, whatever
+        # the process prints meanwhile (see _line). A caller gives the longest the command may rightly take.
         with self.lock:
             if self.dead:
                 raise RuntimeError(f"{self.name} is no longer usable (it timed out or exited)")
@@ -281,10 +293,10 @@ class Repl:
             except OSError as e:                # the process is gone: say so in the one exception type callers catch
                 self.dead = True
                 raise RuntimeError(f"{self.name} is no longer running ({e})") from None
-            rc, res, t0 = None, "", time.time()
+            rc, res, deadline = None, "", time.monotonic() + timeout
             while True:
                 try:
-                    line = self.q.get(timeout=max(1, timeout - (time.time() - t0)))
+                    line = self._line(deadline)
                 except queue.Empty:
                     self.dead = True
                     raise RuntimeError(f"{self.name}: '{tcl[:60]}' timed out after {timeout} s")
@@ -514,6 +526,88 @@ def is_data_row(row):
     return bool(row) and row[0].strip().isdigit()
 
 
+def blocks(rows, size=2048):
+    """The rows a few at a time, as lists: what is done to a capture is done to a block of its rows, so that a
+    capture of any length is worked on without ever being held whole."""
+    rows = iter(rows)
+    while True:
+        block = list(itertools.islice(rows, size))
+        if not block:
+            return
+        yield block
+
+
+HEX_LETTER = re.compile("[a-fA-F]")
+NOT_HEX_DIGITS = dict.fromkeys(map(ord, "0123456789abcdefABCDEF,"))      # for str.translate: these are taken away
+
+
+class ColumnScan:
+    """What column_radixes needs to know of the multi-bit columns, from data rows that come a block at a time
+    (add) and are not kept: a few yes/no answers per column are all that stays. radixes() is then the answer
+    of column_radixes for all rows that were added."""
+    def __init__(self, hdr):
+        self.hdr, self.width = hdr, bus_columns(hdr)
+        # per column: a value that is clearly hex / clearly decimal, one with "0x", one without - and one with
+        # a minus sign, which is what tells a reader of a few rows that the column was written signed
+        self.is_hex, self.is_dec, self.prefixed, self.bare, self.minus = (
+            dict.fromkeys(self.width, False) for _ in range(5))
+
+    def add(self, rows):
+        for block in blocks(rows):
+            columns = list(itertools.zip_longest(*block))      # a row that ends early leaves None
+            for i, w in self.width.items():
+                if i >= len(columns):
+                    continue
+                values = set(columns[i])                       # each one once: a block repeats most of them
+                values.discard(None)
+                n = (w + 3) // 4
+                if not ",".join(values).translate(NOT_HEX_DIGITS):
+                    # Nothing but hex digits in any of them - what a column holds unless it was written signed
+                    # or with "0x". The rules of the loop below, for all values at once: a column that never
+                    # repeats itself has as many values as the capture has samples, and looking at each of them
+                    # by itself took most of the time of reading a capture.
+                    values.discard("")
+                    digits = [v for v in values if v.isdigit()]
+                    lengths = set(map(len, digits))
+                    if values:
+                        self.bare[i] = True
+                    if len(digits) < len(values) or (
+                            n > 1 and n in lengths and any(v[0] == "0" for v in digits if len(v) == n)):
+                        self.is_hex[i] = True
+                    if lengths - {n}:
+                        self.is_dec[i] = True
+                    continue
+                for v in values:
+                    v = v.strip()
+                    if not v:
+                        continue
+                    if v[0] == "-":
+                        self.minus[i] = True
+                    if v[:2] in ("0x", "0X"):
+                        self.prefixed[i] = True
+                        continue
+                    self.bare[i] = True
+                    if HEX_LETTER.search(v):
+                        self.is_hex[i] = True
+                    elif v[0] in "+-" or len(v) != n:
+                        self.is_dec[i] = True
+                    elif n > 1 and v[0] == "0":
+                        self.is_hex[i] = True
+
+    def radixes(self):
+        clear, ambiguous, bare_hex = {}, [], False
+        for i in self.width:
+            if (self.is_hex[i] and self.is_dec[i]) or (self.prefixed[i] and self.bare[i]):
+                raise ValueError(f"column {self.hdr[i]}: both hex and decimal values")
+            if self.prefixed[i] or self.is_hex[i] or self.is_dec[i]:
+                clear[i] = "dec" if self.is_dec[i] else "hex"
+                bare_hex = bare_hex or self.is_hex[i]
+            else:
+                ambiguous.append(i)
+        default = "hex" if bare_hex else "dec"
+        return {**clear, **{i: default for i in ambiguous}}
+
+
 def column_radixes(hdr, rows):
     """{column index: 'hex' | 'dec'} for the multi-bit columns (rows = split data rows).
     Hex beyond doubt: values written "0x..." (the way this tool writes a probe asked for in hex). Otherwise
@@ -521,80 +615,242 @@ def column_radixes(hdr, rows):
     than the hex width. A column that fits both (only full-width digit strings without a leading zero) follows
     the file: hex if another column is clearly hex WITHOUT saying so (Vivado's default export, where every
     column is), otherwise decimal - a "0x" column says nothing about its neighbours."""
-    clear, ambiguous, bare_hex = {}, [], False
-    for i, w in bus_columns(hdr).items():
-        n = (w + 3) // 4
-        is_hex = is_dec = prefixed = bare = False
-        for v in {r[i].strip() for r in rows if i < len(r)}:
-            if not v:
-                continue
-            if v[:2] in ("0x", "0X"):
-                prefixed = True
-                continue
-            bare = True
-            if any(ch in "abcdefABCDEF" for ch in v):
-                is_hex = True
-            elif v[0] in "+-" or len(v) != n:
-                is_dec = True
-            elif n > 1 and v[0] == "0":
-                is_hex = True
-        if (is_hex and is_dec) or (prefixed and bare):
-            raise ValueError(f"column {hdr[i]}: both hex and decimal values")
-        if prefixed or is_hex or is_dec:
-            clear[i] = "dec" if is_dec else "hex"
-            bare_hex = bare_hex or is_hex
+    scan = ColumnScan(hdr)
+    scan.add(rows)
+    return scan.radixes()
+
+
+# ---------------------------------------------------------------- reading a capture file
+# A capture is read as a stream, a piece at a time, and never held whole: the CSV of a deep core with many
+# probes is tens to hundreds of MB, and as one text plus a list of rows of cells it took ten times that in
+# memory - for every window of a run, several times over.
+# MAX_CAPTURE_BYTES is the most text a capture file may hold; one that holds more is refused with a sentence.
+# A capture is a file that people pass on, and a .csv.gz or a .ila of a few hundred KB can unpack to any size.
+# The limit is far above what a real capture is - 131072 samples of a few thousand probe bits, the most a core
+# can hold, are under half a GB of CSV - so that it never stands in the way of one.
+MAX_CAPTURE_BYTES = 2 << 30
+MAX_LINE_CHARS = 16 << 20           # ... and one line of it: a header of a thousand long names is under 1 MB
+CHUNK_BYTES = 1 << 20
+# A probe file is read whole, by "check" here and by the GUI bridge: one above this size is not looked into.
+# The probe file of a design with tens of thousands of probe bits is a few MB.
+MAX_LTX_BYTES = 64 << 20
+
+
+def ila_chunks(path, limit=None):
+    """The text of a capture file (see read_ila_text), a piece of at most CHUNK_BYTES characters at a time.
+    limit: the most bytes of text the file may hold, MAX_CAPTURE_BYTES unless given, 0 for any number;
+    ValueError for a file that holds more. A generator: close() it, or read it to its end, before the file is
+    replaced or removed - until then the file is open."""
+    limit = MAX_CAPTURE_BYTES if limit is None else limit
+    too_large = (f"{path}: the capture holds more than {limit} bytes of text ({limit >> 20} MB), and no more than "
+                 f"that is read")
+    with contextlib.ExitStack() as opened:
+        if path.lower().endswith(".ila"):
+            archive = opened.enter_context(zipfile.ZipFile(path))
+            # the size the archive states for the text is the most that unpacking gives: looked at before any
+            # of it is unpacked
+            if limit and archive.getinfo("waveform.csv").file_size > limit:
+                raise ValueError(too_large)
+            f = opened.enter_context(archive.open("waveform.csv"))
         else:
-            ambiguous.append(i)
-    default = "hex" if bare_hex else "dec"
-    return {**clear, **{i: default for i in ambiguous}}
+            f = opened.enter_context((gzip.open if path.lower().endswith(".gz") else open)(path, "rb"))
+        size = 0
+        while True:
+            chunk = f.read(CHUNK_BYTES)
+            if not chunk:
+                return
+            size += len(chunk)
+            if limit and size > limit:           # a .csv.gz says its size nowhere: counted as it is unpacked
+                raise ValueError(too_large)
+            yield chunk.decode("ascii")
 
 
 def read_ila_text(path):
     """Text of a Vivado ILA CSV (plain or gzipped), or of the waveform.csv inside a .ila archive (a .ila is a
-    zip, and its waveform.csv is byte-identical to write_hw_ila_data -csv_file)."""
-    if path.lower().endswith(".ila"):
-        with zipfile.ZipFile(path) as z:
-            return z.read("waveform.csv").decode("ascii")
-    op = gzip.open if path.lower().endswith(".gz") else open
-    with op(path, "rb") as f:
-        return f.read().decode("ascii")
+    zip, and its waveform.csv is byte-identical to write_hw_ila_data -csv_file). The whole text at once: for a
+    capture of unknown size use ila_rows or ila_lines."""
+    with contextlib.closing(ila_chunks(path)) as chunks:
+        return "".join(chunks)
+
+
+def ila_lines(path, limit=None):
+    """The lines of a capture file one after the other, as str.splitlines() gives them for its text, the file
+    never held whole. A generator like ila_chunks, with the same limit."""
+    with contextlib.closing(ila_chunks(path, limit)) as chunks:
+        rest = ""
+        for chunk in chunks:
+            text = rest + chunk
+            lines = text.splitlines()
+            if text[-1:] in ("\n", "\v", "\f", "\x1c", "\x1d", "\x1e"):
+                rest = ""
+            else:
+                # the last line goes on in the next piece - also behind "\r", which may be half of "\r\n"
+                rest = (lines.pop() if lines else "") + ("\r" if text.endswith("\r") else "")
+                if len(rest) > MAX_LINE_CHARS:
+                    raise ValueError(f"{path}: a line of more than {MAX_LINE_CHARS} characters: this is no ILA CSV")
+            yield from lines
+        yield from rest.splitlines()
+
+
+def ila_rows(path, limit=None):
+    """The lines of a capture file split into their cells, one after the other: the header first, and of what
+    follows the rows that is_data_row knows are the samples. A generator like ila_chunks, with the same limit."""
+    with contextlib.closing(ila_lines(path, limit)) as lines:
+        for line in lines:
+            yield line.split(",")
+
+
+def ila_header(rows):
+    """The first row of ila_rows, which is the header; the generator then goes on with the rows below it."""
+    for hdr in rows:
+        return hdr
+    raise IndexError("list index out of range")          # what the header of an empty file has always been
+
+
+def ila_data_rows(path, step=1):
+    """Every step-th sample of a capture file, split into its cells: the first one, the one `step` samples
+    further on, and so on - what a display of a long capture shows. The file is read through once."""
+    with contextlib.closing(ila_lines(path)) as lines:
+        next(lines, None)                        # the header
+        at = 0
+        for line in lines:
+            if line.split(",", 1)[0].strip().isdigit():          # is_data_row, without splitting the whole line
+                if at % step == 0:
+                    yield line.split(",")
+                at += 1
+
+
+def scan_columns(path, pick):
+    """One pass over a capture file for what is asked about some of its columns, the file never held whole:
+    (header, number of samples, {column index: radix} as column_radixes gives it for the whole file, col).
+    col(i) is column i as a list, the cell of every sample, for the columns that pick(header) names - and the
+    IndexError it was to ask a list of rows for it when a sample ends before that column."""
+    with contextlib.closing(ila_rows(path)) as rows:
+        hdr = ila_header(rows)
+        cells, cut = {i: [] for i in pick(hdr)}, set()
+        scan, count = ColumnScan(hdr), 0
+        for block in blocks(r for r in rows if is_data_row(r)):
+            count += len(block)
+            scan.add(block)
+            for i, column in cells.items():
+                try:
+                    column.extend([r[i] for r in block])
+                except IndexError:
+                    cut.add(i)
+
+        def col(i):
+            if i in cut:
+                raise IndexError("list index out of range")
+            return cells[i]
+
+        return hdr, count, scan.radixes(), col
 
 
 def load_ila(path):
-    """(header, data rows, {column index: radix}) of an ILA CSV or .ila archive."""
-    lines = [l.split(",") for l in read_ila_text(path).splitlines()]
-    data = [r for r in lines[1:] if is_data_row(r)]
-    return lines[0], data, column_radixes(lines[0], data)
+    """(header, data rows, {column index: radix}) of an ILA CSV or .ila archive. All samples at once: what only
+    asks about some columns uses scan_columns."""
+    with contextlib.closing(ila_rows(path)) as rows:
+        hdr = ila_header(rows)
+        data = [r for r in rows if is_data_row(r)]
+    return hdr, data, column_radixes(hdr, data)
+
+
+# The functions that rewrite a capture come in two forms: for a text (ila_text_...) and for a file
+# (ila_csv_...). Both go through the same steps, which take the capture as `lines`: a function that gives its
+# lines - the pieces of the text between its line ends - anew every time it is called. The radix of a column
+# is decided from all its values, so a capture is read through before the first line can be written: a file
+# is read more than once, and no more of it is held than a block of rows.
+KNOWN_VALUES = 4096                              # how many values of a column are remembered, see _formatted_lines
+
+
+def _text_lines(text):
+    """(line end, lines) of a capture text: "\\r\\n" when the text has one near its start, else "\\n"."""
+    nl = "\r\n" if "\r\n" in text[:100000] else "\n"
+    pieces = text.split(nl)
+    return nl, lambda: (line for line in pieces)
+
+
+def _file_lines(path):
+    """(line end, lines) of a capture file, as _text_lines gives them for its text."""
+    head = ""
+    with contextlib.closing(ila_chunks(path)) as chunks:
+        for chunk in chunks:
+            head += chunk
+            if len(head) >= 100000:
+                break
+    nl = "\r\n" if "\r\n" in head[:100000] else "\n"
+
+    def lines():
+        with contextlib.closing(ila_chunks(path)) as chunks:
+            rest = ""
+            for chunk in chunks:
+                pieces = (rest + chunk).split(nl)
+                rest = pieces.pop()
+                if len(rest) > MAX_LINE_CHARS:
+                    raise ValueError(f"{path}: a line of more than {MAX_LINE_CHARS} characters: this is no ILA CSV")
+                yield from pieces
+            yield rest
+
+    return nl, lines
+
+
+def _scan_lines(lines):
+    """(header, ColumnScan of all samples) of a capture that comes as lines."""
+    with contextlib.closing(lines()) as it:
+        rows = (line.split(",") for line in it)
+        hdr = next(rows)                         # there always is one: a text without a line end is one line
+        scan = ColumnScan(hdr)
+        scan.add(r for r in rows if is_data_row(r))
+    return hdr, scan
+
+
+def _decimal_lines(lines):
+    """ila_text_to_decimal for a capture that comes as lines: (its new lines - a generator that reads the
+    capture once more - or None when no column is hex, names of converted columns)."""
+    hdr, scan = _scan_lines(lines)
+    hexcols = [i for i, r in scan.radixes().items() if r == "hex"]
+    if not hexcols:
+        return None, []
+
+    def new():
+        with contextlib.closing(lines()) as it:
+            yield next(it)                       # the header, as it is
+            for line in it:
+                r = line.split(",")
+                if is_data_row(r):
+                    for i in hexcols:
+                        if i < len(r) and r[i].strip():
+                            r[i] = str(int(r[i], 16))
+                elif r[0].strip().lower().startswith("radix"):
+                    for i in hexcols:            # a radix row (newer Vivado versions) keeps matching the data
+                        if i < len(r):
+                            r[i] = "UNSIGNED"
+                yield ",".join(r)
+
+    return new(), [hdr[i].split("/")[-1] for i in hexcols]
 
 
 def ila_text_to_decimal(text):
     """(text, names of converted columns): every hex multi-bit column rewritten in unsigned decimal. Nothing
     else changes: header, 1-bit columns, separators and line ends stay byte-identical."""
-    nl = "\r\n" if "\r\n" in text[:100000] else "\n"
-    lines = [l.split(",") for l in text.split(nl)]
-    data = [r for r in lines[1:] if is_data_row(r)]
-    hexcols = [i for i, r in column_radixes(lines[0], data).items() if r == "hex"]
-    if not hexcols:
-        return text, []
-    for r in data:
-        for i in hexcols:
-            if i < len(r) and r[i].strip():
-                r[i] = str(int(r[i], 16))
-    for r in lines[1:]:                          # a radix row (newer Vivado versions) keeps matching the data
-        if r and r[0].strip().lower().startswith("radix"):
-            for i in hexcols:
-                if i < len(r):
-                    r[i] = "UNSIGNED"
-    return nl.join(",".join(r) for r in lines), [lines[0][i].split("/")[-1] for i in hexcols]
+    nl, lines = _text_lines(text)
+    new, cols = _decimal_lines(lines)
+    return (text, []) if new is None else (nl.join(new), cols)
 
 
-def _write_text(path, text):
+def _write_lines(path, lines, nl):
+    """Write the lines of a capture (a generator), with this line end between them, to the file - through a
+    .tmp file that takes its place when all is written. Block by block: the text is not held."""
     op = gzip.open if path.lower().endswith(".gz") else open
     try:
         with op(path + ".tmp", "wb") as f:
-            f.write(text.encode("ascii"))
+            between = ""
+            for block in blocks(lines):
+                f.write((between + nl.join(block)).encode("ascii"))
+                between = nl
         os.replace(path + ".tmp", path)
     except BaseException:
+        lines.close()                   # the lines may come from the very file this one was to replace
         _unlink(path + ".tmp")          # a full disk must not leave .tmp files behind
         raise
 
@@ -613,11 +869,12 @@ def ila_csv_to_decimal(src, dst=None):
     dst = dst or src
     if dst.lower().endswith(".ila"):
         raise ValueError(f"{dst}: the .ila archive is never rewritten, give a .csv destination")
-    new, cols = ila_text_to_decimal(read_ila_text(src))
+    nl, lines = _file_lines(src)
+    new, cols = _decimal_lines(lines)
     if not cols and os.path.abspath(dst) == os.path.abspath(src):
         return cols
     mtime = os.stat(src).st_mtime
-    _write_text(dst, new)
+    _write_lines(dst, lines() if new is None else new, nl)
     os.utime(dst, (mtime, mtime))
     return cols
 
@@ -656,52 +913,82 @@ def format_columns(hdr, formats):
     return out
 
 
+def _formatted_lines(lines, formats):
+    """ila_text_formatted for a capture that comes as lines (see _text_lines): (its new lines - a generator that
+    reads the capture once more - or None when everything is as asked, {column name: format})."""
+    hdr, scan = _scan_lines(lines)
+    written = scan.radixes()
+    wanted = format_columns(hdr, formats)
+    asked = {}                                   # column: (format, base its values are written in, width)
+    for i, w in scan.width.items():
+        fmt = wanted.get(i)
+        if fmt is None and written.get(i) == "hex" and not scan.prefixed[i]:
+            # Hex that nobody asked about. Without "0x" it is Vivado's own export and becomes unsigned decimal.
+            # With "0x" it is a format somebody chose in an earlier pass over this file, which a second pass
+            # with other formats must not undo. One value tells: column_radixes refuses a column that mixes them.
+            fmt = "unsigned"
+        if fmt is not None:
+            asked[i] = (fmt, 16 if written.get(i) == "hex" else 10, w)
+    # A value and how it is written as asked: a capture repeats most values many times, and each is worked out
+    # once. Not for ever: a column that never repeats itself would otherwise be held whole after all.
+    known = {i: {} for i in asked}
+
+    def as_asked(i, v):
+        """a cell of column i, written the way that was asked"""
+        out = known[i].get(v)
+        if out is None:
+            fmt, base, w = asked[i]
+            out = v
+            if v.strip():
+                u = int(v, base) % (1 << w)      # the bits of the probe, however they were written
+                out = f"0x{u:0{(w + 3) // 4}X}" if fmt == "hex" else str(
+                    u - (1 << w) if fmt == "signed" and u >= 1 << (w - 1) else u)
+            if len(known[i]) >= KNOWN_VALUES:
+                known[i].clear()
+            known[i][v] = out
+        return out
+
+    # Only a column that holds a value which is not written as asked is rewritten, and named in the answer. The
+    # samples are read until every column has shown one - for a column that is as asked already, to the end.
+    same = set(asked)
+    with contextlib.closing(lines()) as it:
+        next(it)                                 # the header
+        for line in it:
+            if not same:
+                break
+            r = line.split(",")
+            if is_data_row(r):
+                same -= {i for i in same if i < len(r) and as_asked(i, r[i]) != r[i]}
+    changed = {i: asked[i][0] for i in asked if i not in same}
+    if not changed:
+        return None, {}
+
+    def new():
+        with contextlib.closing(lines()) as it:
+            yield next(it)                       # the header, as it is
+            for line in it:
+                r = line.split(",")
+                if is_data_row(r):
+                    for i in changed:
+                        if i < len(r):
+                            r[i] = as_asked(i, r[i])
+                elif r[0].strip().lower().startswith("radix"):
+                    for i, fmt in changed.items():       # a radix row (newer Vivado versions) keeps matching
+                        if i < len(r):
+                            r[i] = fmt.upper()
+                yield ",".join(r)
+
+    return new(), {hdr[i].strip().split("/")[-1]: fmt for i, fmt in changed.items()}
+
+
 def ila_text_formatted(text, formats):
     """(text, {column name: format}) with the multi-bit columns written the way `formats` asks; the dictionary
     names the columns that had to be rewritten for it. A column nobody asked about is left as it is, except that
     hex without "0x" becomes unsigned decimal (as ila_text_to_decimal does). Header, 1-bit columns, separators
     and line ends stay byte-identical, and so does the whole text when everything is already as asked."""
-    nl = "\r\n" if "\r\n" in text[:100000] else "\n"
-    lines = [l.split(",") for l in text.split(nl)]
-    hdr = lines[0]
-    data = [r for r in lines[1:] if is_data_row(r)]
-    written = column_radixes(hdr, data)
-    wanted = format_columns(hdr, formats)
-    changed = {}
-    for i, w in bus_columns(hdr).items():
-        fmt = wanted.get(i)
-        if fmt is None and written.get(i) == "hex":
-            # Hex that nobody asked about. Without "0x" it is Vivado's own export and becomes unsigned decimal.
-            # With "0x" it is a format somebody chose in an earlier pass over this file, which a second pass
-            # with other formats must not undo. One value tells: column_radixes refuses a column that mixes them.
-            first = next((r[i].strip() for r in data if i < len(r) and r[i].strip()), "")
-            if first[:2] not in ("0x", "0X"):
-                fmt = "unsigned"
-        if fmt is None:
-            continue
-        base = 16 if written.get(i) == "hex" else 10
-        full, half, digits = 1 << w, 1 << (w - 1), (w + 3) // 4
-        new = {}                                 # per distinct value: a capture repeats most of them many times
-        for v in {r[i] for r in data if i < len(r)}:
-            if not v.strip():
-                continue
-            u = int(v, base) % full              # the bits of the probe, however they were written
-            out = f"0x{u:0{digits}X}" if fmt == "hex" else str(u - full if fmt == "signed" and u >= half else u)
-            if out != v:
-                new[v] = out
-        if new:
-            for r in data:
-                if i < len(r) and r[i] in new:
-                    r[i] = new[r[i]]
-            changed[i] = fmt
-    if not changed:
-        return text, {}
-    for r in lines[1:]:                          # a radix row (newer Vivado versions) keeps matching the data
-        if r and r[0].strip().lower().startswith("radix"):
-            for i, fmt in changed.items():
-                if i < len(r):
-                    r[i] = fmt.upper()
-    return nl.join(",".join(r) for r in lines), {hdr[i].strip().split("/")[-1]: fmt for i, fmt in changed.items()}
+    nl, lines = _text_lines(text)
+    new, cols = _formatted_lines(lines, formats)
+    return (text, {}) if new is None else (nl.join(new), cols)
 
 
 def ila_csv_format(src, formats, dst=None):
@@ -711,11 +998,12 @@ def ila_csv_format(src, formats, dst=None):
     dst = dst or src
     if dst.lower().endswith(".ila"):
         raise ValueError(f"{dst}: the .ila archive is never rewritten, give a .csv destination")
-    new, cols = ila_text_formatted(read_ila_text(src), formats)
+    nl, lines = _file_lines(src)
+    new, cols = _formatted_lines(lines, formats)
     if not cols and os.path.abspath(dst) == os.path.abspath(src):
         return cols
     mtime = os.stat(src).st_mtime
-    _write_text(dst, new)
+    _write_lines(dst, lines() if new is None else new, nl)
     os.utime(dst, (mtime, mtime))
     return cols
 
@@ -789,36 +1077,54 @@ def stats_of(path, st_cfg):
     """Statistics of one capture. With stats.mode 'magnitude' the value probe is treated as a magnitude
     (|x|, amplitude-like data) and the distribution plus the threshold crossings are reported. Set mode 'none'
     to record only the control probes and event counts."""
-    hdr, data, rad = load_ila(path)
-    out = {"rows": len(data)}
-    if not data:
+    watched = list(dict.fromkeys(list(st_cfg.get("ctrl_probes", [])) + list(st_cfg.get("warn_if_high", []))))
+    valued = st_cfg.get("mode", "magnitude") != "none" and st_cfg.get("value_probe")
+    # The capture is read through once, and of its columns only those are kept that are asked about below: a
+    # capture of a deep core with many probes is not held whole (see ila_chunks). col(i) is column i of the
+    # samples; a probe that is not in the capture is told about below, where it is asked for.
+    asked = watched + list(st_cfg.get("event_probes", []))
+    if valued:
+        asked += [st_cfg[key] for key in ("value_probe", "valid_probe", "reference_probe") if st_cfg.get(key)]
+
+    def pick(hdr):
+        found = set()
+        for name in asked:
+            try:
+                found.add(probe_index(hdr, name))
+            except KeyError:
+                pass
+        return found
+
+    hdr, count, rad, col = scan_columns(path, pick)
+    out = {"rows": count}
+    if not count:
         return out
     base = lambda i: 16 if rad.get(i) == "hex" else 10
     ctrl = {}
-    watched = list(dict.fromkeys(list(st_cfg.get("ctrl_probes", [])) + list(st_cfg.get("warn_if_high", []))))
     for name in watched:
         try:
             i = probe_index(hdr, name)
         except KeyError:
             continue
-        ctrl[name] = "".join(sorted({r[i] for r in data}))
+        ctrl[name] = "".join(sorted(set(col(i))))
     out["ctrl"] = ";".join(f"{k}={v}" for k, v in ctrl.items())
     for name in st_cfg.get("event_probes", []):
         try:
             i = probe_index(hdr, name)
         except KeyError:
             continue
-        out[f"n_{name}"] = len(rising_edges(data, i))
-    if st_cfg.get("mode", "magnitude") == "none" or not st_cfg.get("value_probe"):
+        out[f"n_{name}"] = len(rising_edges(list(zip(col(i))), 0))
+    if not valued:
         return out
     ia = probe_index(hdr, st_cfg["value_probe"])
     iv = probe_index(hdr, st_cfg["valid_probe"]) if st_cfg.get("valid_probe") else None
-    v = [int(r[ia], base(ia)) for r in data if iv is None or r[iv] == "1"]
+    valid = col(iv) if iv is not None else None
+    v = [int(x, base(ia)) for k, x in enumerate(col(ia)) if valid is None or valid[k] == "1"]
     out.update(n=len(v), radix=rad.get(ia, "dec"))
     if st_cfg.get("reference_probe"):
         try:
             ir = probe_index(hdr, st_cfg["reference_probe"])
-            out["ref_level"] = ";".join(str(x) for x in sorted({int(r[ir], base(ir)) for r in data}))[:40]
+            out["ref_level"] = ";".join(str(x) for x in sorted({int(x, base(ir)) for x in col(ir)}))[:40]
         except KeyError:
             pass
     if not v:
@@ -1363,6 +1669,9 @@ def cmd_check(args, prof):
         problems.append(f"hardware.ltx not found: {hw['ltx']}")
     else:
         try:
+            if os.path.getsize(hw["ltx"]) > MAX_LTX_BYTES:
+                raise ValueError(f"the file has {os.path.getsize(hw['ltx'])} bytes: a probe file is read up to "
+                                 f"{MAX_LTX_BYTES} bytes ({MAX_LTX_BYTES >> 20} MB)")
             txt = open(hw["ltx"], encoding="utf-8-sig", errors="replace").read()
             if txt.lstrip()[:1] == "{":
                 # the JSON form (the XML form starts with "<"): every probe port of every core, and the hub
@@ -1602,15 +1911,15 @@ def norm_status(st):
 
 def has_data_rows(path):
     """True when the capture file holds at least one sample. An upload from a core that never triggered
-    produces a header-only file, and counting that as a capture would quietly inflate every later number."""
+    produces a header-only file, and counting that as a capture would quietly inflate every later number.
+    The file is read as far as its first sample, which is a few lines whatever its size - this is asked after
+    every window of a run - and so no limit on its size applies here."""
     try:
-        text = read_ila_text(path)
+        with contextlib.closing(ila_rows(path, limit=0)) as rows:
+            next(rows, None)                     # the header; a radix row may follow it (newer Vivado versions)
+            return any(is_data_row(r) for r in rows)
     except Exception:
         return False
-    for line in text.splitlines()[1:]:
-        if is_data_row(line.split(",")):
-            return True
-    return False
 
 
 def watch_fields(st_cfg):
@@ -1953,19 +2262,32 @@ def capture_summary(path, prof):
     """Per-capture timeline: the trigger sample is the time origin, rising/falling edges of the event probes are
     reported relative to it (in us when capture.sample_period_ns is set, in samples otherwise)."""
     st_cfg, per = prof["stats"], prof["capture"].get("sample_period_ns", 0)
-    hdr, rows, rad = load_ila(path)
-    if not rows:
+    timed = st_cfg.get("event_probes", []) + st_cfg.get("ctrl_probes", [])
+
+    def pick(hdr):
+        """the columns asked about below - as in stats_of, the capture is not held whole"""
+        found = {probe_index(hdr, "TRIGGER")} if any(c.strip() == "TRIGGER" for c in hdr) else set()
+        for name in timed:
+            try:
+                found.add(probe_index(hdr, name))
+            except KeyError:
+                pass
+        return found
+
+    hdr, count, rad, col = scan_columns(path, pick)
+    if not count:
         return {}
     it = probe_index(hdr, "TRIGGER") if any(c.strip() == "TRIGGER" for c in hdr) else None
-    trig = next((k for k, r in enumerate(rows) if it is not None and r[it] == "1"), 0)
+    trig = next((k for k, cell in enumerate(col(it)) if cell == "1"), 0) if it is not None else 0
     unit = (lambda k: round((k - trig) * per / 1000.0, 2)) if per else (lambda k: k - trig)
-    out = {"n_rows": len(rows), "time_unit": "us" if per else "samples"}
-    for name in st_cfg.get("event_probes", []) + st_cfg.get("ctrl_probes", []):
+    out = {"n_rows": count, "time_unit": "us" if per else "samples"}
+    for name in timed:
         try:
             i = probe_index(hdr, name)
         except KeyError:
             continue
-        ups, downs = rising_edges(rows, i), falling_edges(rows, i)
+        rows = list(zip(col(i)))                 # the column as rows of one cell
+        ups, downs = rising_edges(rows, 0), falling_edges(rows, 0)
         out[f"{name}_n"] = len(ups)
         out[f"{name}_first"] = unit(ups[0]) if ups else ""
         out[f"{name}_last_off"] = unit(downs[-1]) if downs else ""

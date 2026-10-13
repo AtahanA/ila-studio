@@ -62,6 +62,14 @@ def test_json_that_is_no_probe_file_is_noted_and_left_to_vivado(prof, capsys, wr
     assert 'note:    hardware.ltx could not be parsed (the file is JSON, but it has no "ltx_root"' in out
 
 
+def test_probe_file_above_the_size_that_is_read_is_noted_and_left_to_vivado(prof, capsys, monkeypatch):
+    monkeypatch.setattr(ic, "MAX_LTX_BYTES", len(LTX) - 1)
+    code, out = check(prof, capsys)
+    assert code == 0
+    assert "note:    hardware.ltx could not be parsed (the file has %d bytes: a probe file is read up to %d bytes " \
+           "(0 MB)) - it is still passed to Vivado as is" % (len(LTX), len(LTX) - 1) in out
+
+
 def test_vivado_is_looked_for_the_way_a_run_does(prof, capsys, tmp_path):
     # a run would not stop at the missing tools.vivado but go on to search, so here it is a note, not a problem
     code, out = check(prof, capsys)

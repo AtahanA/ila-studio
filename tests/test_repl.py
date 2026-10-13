@@ -4,19 +4,26 @@
 """The Repl class against a stand-in for the Tcl process: a few lines of Python that speak the protocol of
 scripts/vivado_ila_repl.tcl - "@@READY" once, then "@@RC", "@@RES" and "@@END" after every line they are sent."""
 import sys
+import time
 
 import pytest
 
 import ila_capture as ic
 
 # Answers every line with the line itself; a line starting with "error" fails, "die" ends the process without
-# an answer, and "exit" ends it the way Vivado does.
+# an answer, and "exit" ends it the way Vivado does. "chatter" is never answered: the process prints a line
+# every 50 ms for a quarter of a minute and then ends.
 STAND_IN = """\
-import sys
+import sys, time
 print("@@READY", flush=True)
 for line in sys.stdin:
     line = line.rstrip("\\n")
     if line == "die":
+        break
+    if line == "chatter":
+        for _ in range(300):
+            print("still busy", flush=True)
+            time.sleep(0.05)
         break
     print("output of " + line)
     print("@@RC %d" % line.startswith("error"))
@@ -89,3 +96,24 @@ def test_close_asks_for_an_orderly_exit(start):
 def test_process_that_never_gets_ready_is_reported_with_its_last_words():
     with pytest.raises(RuntimeError, match="vivado exited during start-up: no license"):
         ic.Repl([sys.executable, "-B", "-c", "print('no license')"], "vivado", lambda msg, quiet=False: None)
+
+
+def test_command_runs_out_of_time_although_the_process_keeps_printing(start):
+    repl = start()
+    began = time.monotonic()
+    # the time of a command counts from when it is sent, not from the last line the process printed
+    with pytest.raises(RuntimeError, match="vivado: 'chatter' timed out after 1 s"):
+        repl.cmd("chatter", timeout=1)
+    assert time.monotonic() - began < 8                  # ... and not when the process ends by itself, after 15 s
+    assert repl.dead                                     # an answer that came now would be taken for the next one's
+    assert "[vivado] still busy" in start.log
+
+
+def test_process_that_keeps_printing_and_never_gets_ready_is_given_up(monkeypatch):
+    wait_ready = ic.Repl._wait_ready
+    monkeypatch.setattr(ic.Repl, "_wait_ready", lambda self: wait_ready(self, timeout=1))     # 180 s as shipped
+    loading = "import time\nfor _ in range(300):\n    print('loading', flush=True)\n    time.sleep(0.05)"
+    began = time.monotonic()
+    with pytest.raises(RuntimeError, match="vivado did not print @@READY within 1 s"):
+        ic.Repl([sys.executable, "-B", "-c", loading], "vivado", lambda msg, quiet=False: None)
+    assert time.monotonic() - began < 8

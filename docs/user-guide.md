@@ -231,6 +231,10 @@ used.
   chosen in the probe list.
 - **Open File** (bottom bar) shows a `.csv` or `.ila` file from disk. **Import** in the Signal Analysis brings
   many captures in at once, `.csv.gz` included.
+- **Size.** A capture file is read a piece at a time and is not held in memory as a whole. A file that holds
+  more than 2 GB of CSV text is refused with a sentence that says so (for a `.csv.gz` and a `.ila`: the text
+  they unpack to); the deepest core with the widest probes fills a fraction of that. A probe file is read up
+  to 64 MB.
 - The viewer and the analysis get every sample of a capture of up to 131,072 samples. A longer capture is
   thinned, and the footer of the viewer says so.
 

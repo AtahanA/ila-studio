@@ -7,6 +7,9 @@ import pytest
 
 import ila_capture as ic
 
+# every test here twice: with the capture files read as shipped, and in pieces of a few characters and one row
+pytestmark = pytest.mark.usefixtures("pieces")
+
 HEAD = "Sample in Buffer,Sample in Window,TRIGGER,"
 # one-bit probes only: en goes high and stays, ev pulses twice, the trigger is at sample 1
 BITS = HEAD + "top/en,top/ev\n0,0,0,0,0\n1,1,1,1,1\n2,2,0,1,0\n3,3,0,1,1\n"

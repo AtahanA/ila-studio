@@ -30,8 +30,10 @@ everything else is done by the first one. See fresh_session and cmd_capture.
 """
 import argparse
 import concurrent.futures
+import contextlib
 import csv
 import datetime
+import itertools
 import json
 import math
 import os
@@ -98,6 +100,9 @@ def emit(tag, obj):
 
 # ---------------------------------------------------------------- offline: probe file
 NET_INDEX_RE = re.compile(r"\[(\d+)\]$")
+# The largest probe file that is read: MAX_LTX_BYTES of the driver, which says why. Written out here because
+# a probe file in the XML form is read without the driver (see driver).
+MAX_LTX_BYTES = 64 << 20
 
 
 def ltx_probe(nets, width, core, port):
@@ -146,6 +151,10 @@ def parse_ltx_file(ltx_path):
     if not ltx_path or not os.path.exists(ltx_path):
         return {"error": f"LTX file not found: {ltx_path}", "cores": [], "probes": []}
     try:
+        size = os.path.getsize(ltx_path)
+        if size > MAX_LTX_BYTES:                           # it is read whole: not a file of any size
+            raise ValueError(f"the file has {size} bytes: a probe file is read up to {MAX_LTX_BYTES} bytes "
+                             f"({MAX_LTX_BYTES >> 20} MB)")
         if ltx_is_json(ltx_path):
             return parse_ltx_json(ltx_path)
         root = ET.parse(ltx_path).getroot()
@@ -225,20 +234,62 @@ def list_profiles():
 META_COLUMNS = ("sample in buffer", "sample in window")
 
 
+def shown_samples(path, step, bases):
+    """The samples of a capture file that are displayed - every step-th one - as numbers: (the number of each of
+    these samples, {column: [its value in each of them]}) for the columns of `bases`, {column: 10 or 16}. A
+    cell that holds no number, or is not there, is 0. A block of rows at a time: the samples are never all held
+    as rows of cells, which for a deep core with many probes is ten times the text of the capture."""
+    ic = driver()
+    shown, values = [], {col: [] for col in bases}
+    for block in ic.blocks(ic.ila_data_rows(path, step)):
+        shown += [int(r[0]) for r in block]
+        cells = list(itertools.zip_longest(*block))        # column by column; a row that ends early leaves None
+        for col, base in bases.items():
+            column, before = values[col], len(values[col])
+            try:
+                column.extend(map(int, cells[col], itertools.repeat(base)))
+            except (ValueError, TypeError, IndexError):    # one of them is no number: cell by cell
+                del column[before:]
+                for r in block:
+                    try:
+                        column.append(int(r[col].strip(), base))
+                    except (ValueError, IndexError):
+                        column.append(0)
+    return shown, values
+
+
 def parse_csv_capture(path, max_samples=4096):
     """An ILA capture (.csv, .csv.gz or .ila) as waveform channels, thinned to max_samples points for display."""
     if not os.path.exists(path):
         return {"error": f"File not found: {path}"}
+    # The file is read through twice and never held whole (a capture of a deep core with many probes is tens to
+    # hundreds of MB of text): once for what all its samples decide - how many they are, the radix of every
+    # column, where the trigger is, which bus was written signed - and once more for the samples that are shown.
+    ic = driver()
+    total, triggers = 0, {}                                # per TRIGGER column: the first sample that has a 1 there
     try:
-        header, rows, radix = driver().load_ila(path)
+        with contextlib.closing(ic.ila_rows(path)) as rows:
+            header = ic.ila_header(rows)
+            scan = ic.ColumnScan(header)
+            marks = [col for col, name in enumerate(header) if col and name.strip().upper() == "TRIGGER"]
+            for block in ic.blocks(r for r in rows if ic.is_data_row(r)):
+                total += len(block)
+                scan.add(block)
+                for col in marks:
+                    if col not in triggers:
+                        first = next((r for r in block if col < len(r) and r[col].strip() == "1"), None)
+                        if first:
+                            triggers[col] = int(first[0])
+        radix = scan.radixes()
+        step = max(1, math.ceil(total / max_samples)) if max_samples > 0 else 1
+        shown, values_of = shown_samples(path, step, {
+            col: 16 if radix.get(col) == "hex" else 10 for col, name in enumerate(header)
+            if col and name.strip().lower() not in META_COLUMNS and name.strip().upper() != "TRIGGER"})
     except Exception as e:
         return {"error": f"Not a readable ILA capture: {e}"}
-    if not rows:
+    if not total:
         return {"error": "The capture file holds no samples (header only)."}
 
-    total = len(rows)
-    step = max(1, math.ceil(total / max_samples)) if max_samples > 0 else 1
-    shown = rows[::step]
     signals, trigger_sample = [], None
     for col, raw_name in enumerate(header):
         name = raw_name.strip()
@@ -246,26 +297,18 @@ def parse_csv_capture(path, max_samples=4096):
             continue
         base = 16 if radix.get(col) == "hex" else 10       # int() takes "0x1F" with base 16 as well
         if name.upper() == "TRIGGER":                      # Vivado marks the trigger sample with a 1 here
-            for r in rows:
-                if col < len(r) and r[col].strip() == "1":
-                    trigger_sample = int(r[0])
-                    break
+            trigger_sample = triggers.get(col, trigger_sample)
             continue
         m = re.search(r"\[(\d+):(\d+)\]$", name)
         width = abs(int(m.group(1)) - int(m.group(2))) + 1 if m else 1
-        values = []
-        for r in shown:
-            try:
-                values.append(int(r[col].strip(), base))
-            except (ValueError, IndexError):
-                values.append(0)
+        values = values_of.pop(col)
         # A bus column written signed (see "probe format") is handed on as what every other column is: the bits
         # of the probe as an unsigned number. Viewer and analysis then work as with any capture, and "signed"
         # tells the analysis how the file itself read the bus.
         signed = False
         if width > 1:
             signed = any(v < 0 for v in values) or (
-                step > 1 and base == 10 and any(col < len(r) and r[col].lstrip().startswith("-") for r in rows))
+                step > 1 and base == 10 and scan.minus.get(col, False))    # a minus sign in a sample not shown
             if signed and width <= 53:
                 values = [v % (1 << width) for v in values]
         if width > 53:                                     # beyond what a JSON/JavaScript number holds exactly;
@@ -277,7 +320,7 @@ def parse_csv_capture(path, max_samples=4096):
         signals.append({"name": short, "fullName": name, "width": width, "isBus": width > 1, "values": values,
                         "signed": signed})
     return {"filePath": path, "totalSamples": total, "displayedSamples": len(shown), "step": step,
-            "sampleIndices": [int(r[0]) for r in shown], "signals": signals, "triggerSample": trigger_sample}
+            "sampleIndices": shown, "signals": signals, "triggerSample": trigger_sample}
 
 
 def create_demo_capture(out_dir=CAPTURES_DIR, samples=2048):
