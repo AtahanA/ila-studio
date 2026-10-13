@@ -1,0 +1,2489 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Copyright (C) 2026 Atahan Aggunlu */
+
+/* ==========================================================================
+   ILA Studio - Professional Hardware Dark Theme, and a light one
+   ========================================================================== */
+
+/* The two palettes. Every colour below that depends on the theme goes through one of these variables; which one
+   applies is the data-theme attribute of <html> (see theme.ts). What the canvases draw is in theme.ts as well. */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark; /* native selects, spinners, checkboxes and scrollbars follow */
+
+  --bg-primary: #0a0d14;
+  --bg-secondary: #121620;
+  --bg-tertiary: #1a202c;
+  --bg-card: #151a26;
+  --bg-card-hover: #1c2333;
+  --bg-input: #0e121b;
+  --bg-sticky: #11151f; /* table headers that stay while their rows scroll under them: opaque */
+  --bg-sidebar: #0f131c;
+  --bg-plot: #080b11;
+  --bg-code: #06090e;
+  --bg-log: #080b11;
+  --bg-modal: #11151f;
+  --bg-bar: rgba(18, 22, 32, 0.95);
+  --bg-sunken: rgba(0, 0, 0, 0.2);
+  --bg-footer: rgba(0, 0, 0, 0.3);
+  --bg-chip: rgba(0, 0, 0, 0.25);
+  --modal-backdrop: rgba(0, 0, 0, 0.7);
+
+  /* "R G B" triples, for tints: rgb(var(--accent-cyan-rgb) / 0.2) */
+  --overlay-rgb: 255 255 255; /* washes, hover states and hairlines laid over a surface */
+  --shadow-rgb: 0 0 0;
+  --accent-cyan-rgb: 0 240 255;
+  --accent-lime-rgb: 0 255 102;
+  --accent-amber-rgb: 255 204 0;
+  --accent-danger-rgb: 255 0 85;
+  --accent-purple-rgb: 168 85 247;
+  --btn-primary-glow-rgb: 0 210 255;
+
+  --border-color: rgb(var(--overlay-rgb) / 0.08);
+  --border-faint: rgb(var(--overlay-rgb) / 0.03);
+  --border-subtle: rgb(var(--overlay-rgb) / 0.04);
+  --border-focus: #00f0ff;
+  --border-input: var(--border-color); /* the edge of a field: inputs, selects, the segmented group */
+
+  --text-strong: #fff;
+  --text-main: #f0f6fc;
+  --text-muted: #8b949e;
+  --text-dim: #545d68;
+  --log-text: #ff5577;
+  --on-accent: #fff; /* label on a button filled with an accent colour */
+  --on-accent-cyan: #000;
+  --drag-ghost-text: #04121a;
+
+  --accent-cyan: #00f0ff;
+  --accent-lime: #00ff66;
+  --accent-amber: #ffcc00;
+  --accent-danger: #ff0055;
+  --accent-purple: #a855f7;
+
+  /* the small state dots: a fill, not text */
+  --status-ok: var(--accent-lime);
+  --status-busy: var(--accent-amber);
+  --status-error: var(--accent-danger);
+  --status-off: var(--text-dim);
+
+  --btn-primary-from: #00d2ff;
+  --btn-primary-to: #0077ff;
+  --scrollbar-thumb: #2a3447;
+  --scrollbar-thumb-hover: #3b4860;
+
+  --shadow-card: 0 4px 20px rgb(var(--shadow-rgb) / 0.25);
+  --shadow-bar: 0 -4px 20px rgb(var(--shadow-rgb) / 0.4);
+  --shadow-modal: 0 10px 40px rgb(var(--shadow-rgb) / 0.6);
+  --shadow-menu: 0 10px 30px rgb(var(--shadow-rgb) / 0.55);
+  --shadow-import: 0 12px 28px rgb(var(--shadow-rgb) / 0.5);
+}
+
+/* Light: white surfaces on a very light grey page. The neon accents cannot be read as text on white, so each
+   becomes a darker hue of itself (at least 4.5:1 on white and on its own tint); shadows are much softer. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-primary: #f3f5f8;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #eef1f5;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f5f7fa;
+  --bg-input: #ffffff;
+  --bg-sticky: #f6f8fa;
+  --bg-sidebar: #f6f8fa;
+  --bg-plot: #ffffff;
+  --bg-code: #f6f8fa;
+  --bg-log: #f6f8fa;
+  --bg-modal: #ffffff;
+  --bg-bar: rgba(255, 255, 255, 0.95);
+  --bg-sunken: rgba(15, 23, 42, 0.03);
+  --bg-footer: rgba(15, 23, 42, 0.04);
+  --bg-chip: rgba(15, 23, 42, 0.03);
+  --modal-backdrop: rgba(15, 23, 42, 0.45);
+
+  --overlay-rgb: 15 23 42;
+  --shadow-rgb: 15 23 42;
+  --accent-cyan-rgb: 7 96 140;
+  --accent-lime-rgb: 19 111 55;
+  --accent-amber-rgb: 160 74 8;
+  --accent-danger-rgb: 196 0 55;
+  --accent-purple-rgb: 124 58 237;
+  --btn-primary-glow-rgb: 7 96 140;
+
+  --border-color: rgb(var(--overlay-rgb) / 0.14);
+  --border-faint: rgb(var(--overlay-rgb) / 0.07);
+  --border-subtle: rgb(var(--overlay-rgb) / 0.08);
+  --border-focus: #07608c;
+  --border-input: rgb(var(--overlay-rgb) / 0.3); /* a white field on a white card has only its edge */
+
+  --text-strong: #0f172a;
+  --text-main: #1b2330;
+  --text-muted: #475160;
+  --text-dim: #636d7c; /* carries 10-11px text: not lighter than this (4.5:1 on white) */
+  --log-text: #b3123a;
+  --on-accent: #fff;
+  --on-accent-cyan: #fff;
+  --drag-ghost-text: #fff;
+
+  --accent-cyan: #07608c;
+  --accent-lime: #136f37;
+  --accent-amber: #a04a08;
+  --accent-danger: #c40037;
+  --accent-purple: #7c3aed;
+
+  /* brighter than the text accents, which as an 8px dot are all the same dark blob */
+  --status-ok: #16a34a;
+  --status-busy: #f59e0b;
+  --status-error: #e11d48;
+  --status-off: #aab2be;
+
+  --btn-primary-from: #0a75a6;
+  --btn-primary-to: #0a5fc4;
+  --scrollbar-thumb: #c3cad5;
+  --scrollbar-thumb-hover: #a3adbb;
+
+  --shadow-card: 0 1px 3px rgb(var(--shadow-rgb) / 0.08);
+  --shadow-bar: 0 -2px 10px rgb(var(--shadow-rgb) / 0.08);
+  --shadow-modal: 0 10px 40px rgb(var(--shadow-rgb) / 0.22);
+  --shadow-menu: 0 8px 24px rgb(var(--shadow-rgb) / 0.16);
+  --shadow-import: 0 8px 24px rgb(var(--shadow-rgb) / 0.16);
+}
+
+:root {
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --font-mono: "JetBrains Mono", Consolas, "Courier New", monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-x: hidden;
+  user-select: none;
+}
+/* The page is the surface of a tool: a drag must not mark its labels and buttons. What someone has to be able to
+   copy can be marked all the same - an error for a report, the path of a capture, a probe name for a trigger. */
+.error-log-pre,
+.status-label,
+.analysis-window-note,
+.save-profile-error,
+.save-profile-warn,
+.waveform-footer,
+.probe-name-cell {
+  user-select: text;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* App Container */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding-bottom: 74px; /* Space for sticky bottom bar */
+}
+
+/* App Header */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* The header never squeezes its ends: in a window too narrow for one row, profile and status take a row of
+   their own, so its height does not depend on how long the status text happens to be. */
+.app-header {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.header-brand,
+.header-actions {
+  flex: 0 0 auto;
+}
+.brand-text {
+  white-space: nowrap;
+}
+.header-middle {
+  min-width: 0;
+}
+@media (max-width: 1640px) {
+  .header-middle {
+    order: 3;
+    flex: 1 1 100%;
+  }
+  .header-middle .system-status {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .header-middle .status-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: none;
+  }
+}
+
+/* the icon of the application, as it stands in the taskbar */
+.brand-icon {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+.brand-text h1 {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-strong);
+}
+
+.brand-tag {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.header-middle {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.profile-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.profile-selector select {
+  background: var(--bg-input);
+  border: 1px solid var(--border-input);
+  color: var(--text-main);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+/* reached with the keyboard, the list shows where the focus is (as the fields do: see .text-input:focus) */
+.profile-selector select:focus-visible {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 8px rgb(var(--accent-cyan-rgb) / 0.2);
+}
+
+/* "Save configuration": the button at the Profile list, and the small window that asks for the name */
+.profile-save {
+  padding: 5px 10px;
+  font-size: 12px;
+  gap: 6px;
+}
+.save-profile-card {
+  max-width: 540px;
+}
+.save-profile-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.save-profile-name {
+  width: 100%;
+  box-sizing: border-box;
+}
+.save-profile-note,
+.save-profile-warn,
+.save-profile-error {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.save-profile-note + .save-profile-note {
+  margin-top: 8px;
+}
+.save-profile-note code {
+  font-family: var(--font-mono);
+}
+.save-profile-inherits,
+.save-profile-format,
+.save-profile-again {
+  color: var(--text-main);
+}
+.save-profile-warn {
+  color: var(--accent-amber);
+}
+.save-profile-warn b,
+.save-profile-warn code {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.save-profile-error {
+  color: var(--accent-danger);
+}
+.save-profile-footer {
+  gap: 10px;
+}
+.save-profile-footer .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.system-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 10px;
+  background: rgb(var(--overlay-rgb) / 0.03);
+  border-radius: 20px;
+  border: 1px solid var(--border-color);
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.status-indicator.ready {
+  background: var(--status-ok);
+  box-shadow: 0 0 8px var(--status-ok);
+}
+.status-indicator.busy {
+  background: var(--status-busy);
+  box-shadow: 0 0 8px var(--status-busy);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* the light / dark switch: an icon only */
+.theme-toggle {
+  padding: 8px 10px;
+  align-self: stretch; /* no label to give it the height of its neighbours */
+}
+
+/* Nav Tabs */
+.nav-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 24px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.nav-tab {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.nav-tab:hover {
+  color: var(--text-main);
+}
+
+.nav-tab.active {
+  color: var(--accent-cyan);
+  border-bottom-color: var(--accent-cyan);
+  background: rgb(var(--accent-cyan-rgb) / 0.05);
+}
+
+/* Main Content Area */
+.app-main {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dashboard-grid {
+  display: grid;
+  /* minmax(0, ...): a half may be narrower than its content wants. Without it the probe list widened its half
+     beyond the window's edge, where nothing scrolls. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+}
+
+.dashboard-col {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+/* The probe list is as tall as the left column - it ends where the trigger card ends - and scrolls inside. It is
+   taken out of the flow for that: its own length (a row per probe) must not decide the height of the two. */
+.dashboard-grid .right-col {
+  position: relative;
+  min-height: 420px;
+}
+.dashboard-grid .right-col > .probes-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Cards */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  background: rgb(var(--overlay-rgb) / 0.02);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.card-title h3 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.card-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Badges */
+.badge-chip {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: rgb(var(--overlay-rgb) / 0.05);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--btn-primary-from) 0%, var(--btn-primary-to) 100%);
+  color: var(--on-accent);
+  border-color: rgb(var(--overlay-rgb) / 0.1);
+  box-shadow: 0 2px 10px rgb(var(--btn-primary-glow-rgb) / 0.3);
+}
+.btn-primary:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 4px 16px rgb(var(--btn-primary-glow-rgb) / 0.4);
+}
+
+.btn-secondary {
+  background: rgb(var(--overlay-rgb) / 0.06);
+  color: var(--text-main);
+  border-color: var(--border-color);
+}
+.btn-secondary:hover {
+  background: rgb(var(--overlay-rgb) / 0.1);
+}
+
+.btn-outline {
+  background: transparent;
+  color: var(--text-main);
+  border-color: var(--border-color);
+}
+.btn-outline:hover {
+  background: rgb(var(--overlay-rgb) / 0.05);
+  border-color: rgb(var(--overlay-rgb) / 0.2);
+}
+
+.btn-danger {
+  background: var(--accent-danger);
+  color: var(--on-accent);
+}
+
+.btn-large {
+  padding: 12px 28px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: var(--radius-md);
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.btn-tiny {
+  padding: 4px 8px;
+  font-size: 11px;
+  background: rgb(var(--overlay-rgb) / 0.05);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.btn-tiny:hover {
+  color: var(--text-main);
+  background: rgb(var(--overlay-rgb) / 0.1);
+}
+
+.full-width {
+  width: 100%;
+}
+
+/* Form Controls */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.required-star {
+  color: var(--accent-danger);
+}
+
+.form-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.form-hint.success {
+  color: var(--accent-lime);
+}
+
+.text-input, .select-input, .number-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border-input);
+  color: var(--text-main);
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.text-input:focus, .select-input:focus, .number-input:focus {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 8px rgb(var(--accent-cyan-rgb) / 0.2);
+}
+
+.form-label-with-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.badge-chip-inline {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgb(var(--accent-cyan-rgb) / 0.08);
+  color: var(--accent-cyan);
+  border: 1px solid rgb(var(--accent-cyan-rgb) / 0.2);
+  margin-left: 8px;
+}
+
+.input-with-actions {
+  display: flex;
+  gap: 8px;
+}
+.input-with-actions .text-input {
+  flex: 1;
+}
+
+.form-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+/* the JTAG clock: one row, and a hint that stays one line (the whole text is its tooltip) */
+.tck-row .select-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tck-row .text-input.tck-custom {
+  flex: 0 0 64px;
+  width: 64px;
+  padding-left: 8px;
+  padding-right: 4px;
+}
+.form-hint.one-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Cores chips */
+.cores-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+}
+.cores-header {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.cores-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.core-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  cursor: pointer;
+  font-size: 12px;
+}
+.core-chip.active {
+  border-color: var(--accent-cyan);
+  background: rgb(var(--accent-cyan-rgb) / 0.1);
+  color: var(--accent-cyan);
+}
+.core-depth {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+/* several cores: each chip says which one it is, in a width that lets six of them stand in two rows */
+.core-chip {
+  max-width: 100%;
+  min-width: 0;
+}
+.core-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.core-index {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.core-chip.active .core-index {
+  color: inherit;
+}
+.core-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.core-probes {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.core-chip .core-depth {
+  flex: none;
+  white-space: nowrap;
+}
+/* the probe list: where else the search would find something */
+.probes-other-cores {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 18px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-color);
+  background: rgb(var(--accent-cyan-rgb) / 0.04);
+}
+.probes-other-core {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-main);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.probes-other-core:hover:not(:disabled) {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+.probes-other-core:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.probes-other-core b {
+  font-weight: 600;
+  color: var(--accent-cyan);
+}
+.probes-core-label {
+  font-family: var(--font-mono);
+}
+
+/* Trigger Mode Buttons */
+.mode-selector {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+.mode-btn:hover {
+  background: rgb(var(--overlay-rgb) / 0.05);
+  color: var(--text-main);
+}
+.mode-btn.active {
+  border-color: var(--accent-cyan);
+  background: rgb(var(--accent-cyan-rgb) / 0.08);
+  color: var(--accent-cyan);
+}
+.mode-btn-content {
+  display: flex;
+  flex-direction: column;
+}
+.mode-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.mode-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.rule-config-panel {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 14px;
+}
+.rule-config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* Segmented Buttons */
+.btn-group-segmented {
+  display: flex;
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-input);
+  overflow: hidden;
+}
+.btn-seg {
+  flex: 1;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border-right: 1px solid var(--border-color);
+}
+.btn-seg:last-child {
+  border-right: none;
+}
+.btn-seg:hover {
+  color: var(--text-strong);
+}
+.btn-seg.active {
+  background: var(--accent-cyan);
+  color: var(--on-accent-cyan);
+  font-weight: 600;
+}
+
+.capture-params-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.slider-with-number {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.range-slider {
+  flex: 1;
+  accent-color: var(--accent-cyan);
+}
+.number-input {
+  width: 90px;
+  font-family: var(--font-mono);
+}
+
+.syntax-preview {
+  background: var(--bg-code);
+  border: 1px solid rgb(var(--accent-cyan-rgb) / 0.2);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+}
+.syntax-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--accent-cyan);
+  margin-bottom: 4px;
+}
+.syntax-code code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent-lime);
+}
+
+/* Probes Table */
+.probes-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  background: rgb(var(--overlay-rgb) / 0.01);
+  border-bottom: 1px solid var(--border-color);
+}
+.search-box {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-input);
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+}
+.search-input {
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  font-size: 12px;
+  outline: none;
+  width: 100%;
+}
+/* the field is the box around the input, which has no outline of its own: the box shows the focus */
+.search-box:focus-within {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 8px rgb(var(--accent-cyan-rgb) / 0.2);
+}
+.filter-group {
+  display: flex;
+  gap: 6px;
+}
+.filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  cursor: pointer;
+}
+.filter-btn.active {
+  background: rgb(var(--accent-cyan-rgb) / 0.15);
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+
+.probes-table-container {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto; /* sideways too, should a window be too narrow even for the wrapped names */
+}
+.probes-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.probes-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-sticky);
+  text-align: left;
+  padding: 8px 14px;
+  color: var(--text-muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border-color);
+  z-index: 10;
+}
+.probe-row {
+  border-bottom: 1px solid var(--border-faint);
+  transition: background 0.15s ease;
+}
+.probe-row:hover {
+  background: rgb(var(--overlay-rgb) / 0.03);
+}
+.probe-row.row-trigger-active {
+  background: rgb(var(--accent-cyan-rgb) / 0.05);
+}
+.probes-table td {
+  padding: 8px 14px;
+}
+/* a hierarchical net name is one long word: it wraps (after "/" and "_", see ProbeSelector) rather than setting
+   the width of the whole table */
+.probes-table .probe-name-cell {
+  overflow-wrap: anywhere;
+}
+.probes-table th,
+.probes-table td:not(:nth-child(2)) {
+  white-space: nowrap;
+}
+.probes-table th,
+.probes-table td {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.probe-name-cell {
+  display: flex;
+  flex-direction: column;
+}
+.probe-short-name {
+  font-weight: 600;
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+}
+.probe-full-name {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.width-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+.width-badge.bit-badge {
+  background: rgb(var(--accent-cyan-rgb) / 0.1);
+  color: var(--accent-cyan);
+  border: 1px solid rgb(var(--accent-cyan-rgb) / 0.3);
+}
+.width-badge.bus-badge {
+  background: rgb(var(--accent-lime-rgb) / 0.1);
+  color: var(--accent-lime);
+  border: 1px solid rgb(var(--accent-lime-rgb) / 0.3);
+}
+/* how a bus is written into the CSV of a capture */
+.probe-format-select {
+  background: var(--bg-input);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 2px 4px;
+  cursor: pointer;
+}
+.probe-format-select.chosen {
+  color: var(--accent-cyan);
+  border-color: rgb(var(--accent-cyan-rgb) / 0.45);
+}
+.probe-format-select:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.probe-format-select option {
+  background: var(--bg-card);
+  color: var(--text-main);
+}
+.probe-format-head {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  white-space: nowrap;
+}
+.probe-format-bit {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.btn-action-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: rgb(var(--overlay-rgb) / 0.04);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-action-trigger:hover {
+  color: var(--text-strong);
+  background: rgb(var(--overlay-rgb) / 0.1);
+}
+.btn-action-trigger.active {
+  background: rgb(var(--accent-cyan-rgb) / 0.2);
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+/* the active one takes the trigger away again: say so where the mouse is */
+.btn-action-trigger .trigger-remove-x {
+  opacity: 0.55;
+}
+.btn-action-trigger.active:hover {
+  background: rgb(var(--accent-danger-rgb) / 0.14);
+  color: var(--accent-danger);
+  border-color: var(--accent-danger);
+}
+.btn-action-trigger.active:hover .trigger-remove-x {
+  opacity: 1;
+}
+.trigger-probe-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.trigger-remove-btn {
+  flex: none;
+}
+.trigger-remove-btn:hover {
+  color: var(--accent-danger);
+  border-color: var(--accent-danger);
+}
+
+.probe-stats {
+  display: flex;
+  gap: 6px;
+}
+.stat-pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgb(var(--overlay-rgb) / 0.05);
+  color: var(--text-muted);
+}
+
+/* Waveform Viewer Section */
+.waveform-section {
+  width: 100%;
+}
+/* Labels and canvas scroll together, as one area: with separate scrollers the rows beyond the height cap were
+   clipped and could not be reached. */
+.waveform-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 340px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+.signals-sidebar {
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-color);
+}
+.sidebar-header {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-color);
+  height: 24px;
+  display: flex;
+  align-items: center;
+}
+.signals-list {
+  display: flex;
+  flex-direction: column;
+}
+.signal-row-label {
+  height: 44px;
+  padding: 4px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.sig-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+.sig-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+}
+.sig-width {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+}
+.sig-width.bit {
+  background: rgb(var(--accent-cyan-rgb) / 0.15);
+  color: var(--accent-cyan);
+}
+.sig-width.bus {
+  background: rgb(var(--accent-lime-rgb) / 0.15);
+  color: var(--accent-lime);
+}
+.sig-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sig-hover-val {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--accent-amber);
+}
+.btn-mode-toggle {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  border-radius: 3px;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+.btn-mode-toggle.active {
+  background: rgb(var(--accent-amber-rgb) / 0.2);
+  color: var(--accent-amber);
+  border-color: var(--accent-amber);
+}
+
+.waveform-canvas-container {
+  overflow: hidden;
+  cursor: crosshair;
+  background: var(--bg-plot); /* shows through the canvas: the same as the plot background in theme.ts */
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  position: relative;
+}
+.waveform-canvas-container .empty-state {
+  margin: auto;
+}
+.waveform-canvas {
+  display: block;
+}
+.waveform-hover-cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgb(var(--overlay-rgb) / 0.7);
+  pointer-events: none;
+}
+
+.waveform-footer {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 8px 18px;
+  background: var(--bg-footer);
+  border-top: 1px solid var(--border-color);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.waveform-footer .highlight {
+  color: var(--accent-cyan);
+}
+
+.waveform-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Floating Action Bar */
+.capture-control-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 64px;
+  background: var(--bg-bar);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  z-index: 100;
+  box-shadow: var(--shadow-bar);
+}
+.control-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.capture-name-input-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.capture-name-input-box .text-input {
+  width: 160px;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  color: var(--text-muted);
+  text-align: center;
+  gap: 8px;
+}
+.empty-icon {
+  color: var(--text-dim);
+}
+
+/* Error status & Modal */
+.system-status.has-error {
+  border-color: rgb(var(--accent-danger-rgb) / 0.4);
+  background: rgb(var(--accent-danger-rgb) / 0.08);
+}
+.status-indicator.error {
+  background: var(--status-error);
+  box-shadow: 0 0 8px var(--status-error);
+}
+.status-label {
+  max-width: 380px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.btn-link-details {
+  background: transparent;
+  border: none;
+  color: var(--accent-cyan);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0 4px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--modal-backdrop);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal-card {
+  background: var(--bg-modal);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  width: 90%;
+  max-width: 780px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: var(--shadow-modal);
+}
+.modal-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.modal-header h3 {
+  font-size: 14px;
+  color: var(--text-strong);
+}
+.btn-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 20px;
+  cursor: pointer;
+}
+.modal-body {
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+.error-log-pre {
+  background: var(--bg-log);
+  padding: 12px;
+  border-radius: var(--radius-md);
+  color: var(--log-text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 400px;
+  overflow-y: auto;
+}
+.modal-footer {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* What a window shows in place of its page after an error while rendering (ErrorBoundary in main.tsx): text that
+   can be marked and copied, in the colours of the theme on screen. */
+.error-boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  user-select: text;
+}
+.error-boundary h2 {
+  font-size: 16px;
+  color: var(--accent-danger);
+}
+.error-boundary p {
+  color: var(--text-muted);
+}
+.error-boundary-details {
+  align-self: stretch;
+  max-height: 55vh;
+  overflow: auto;
+  padding: 12px;
+  background: var(--bg-log);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ Signal Analysis */
+.analysis-layout {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.analysis-signals {
+  position: sticky;
+  top: calc(var(--app-header-h, 70px) + 12px); /* below the sticky app header, however tall it is */
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - var(--app-header-h, 70px) - 120px);
+}
+.analysis-signals-search {
+  padding: 10px 12px 6px;
+}
+.analysis-signal-list {
+  overflow-y: auto;
+  padding: 4px 6px 10px;
+}
+.analysis-signal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  cursor: grab;
+  font-size: 12px;
+  border-left: 2px solid transparent;
+}
+.analysis-signal:hover {
+  background: rgb(var(--overlay-rgb) / 0.05);
+}
+.analysis-signal.plotted {
+  border-left-color: var(--accent-cyan);
+}
+.analysis-signal.constant .analysis-signal-name {
+  color: var(--text-dim);
+}
+.analysis-signal-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+.analysis-signal-tag {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.analysis-signal-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.analysis-signal-add:hover {
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+.analysis-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.analysis-toolbar {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 12px;
+  overflow: visible; /* the list of the capture navigator hangs out of this card */
+}
+.analysis-toolbar-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+/* The navigator, and "Compare" under it. Under it, not beside it or among the buttons on the left: there the
+   toolbar has room that nothing uses (the buttons on the left take two rows or more up to this width), so the
+   button costs the toolbar no row - not at the smallest window either. */
+.analysis-toolbar-nav {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+@container (min-width: 1400px) {
+  .analysis-toolbar-nav {
+    flex-direction: row-reverse; /* the navigator keeps the corner */
+    align-items: center;
+    gap: 12px;
+  }
+}
+
+/* ------------------------------------------------------------------ the kept hardware session */
+.capture-control-bar .control-bar-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+.hw-session-info {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hw-session-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* "Twin Turbo": the box that belongs to the connection button - two Vivado engines instead of one */
+.twin-turbo {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 5px 9px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.twin-turbo input[type="checkbox"] {
+  accent-color: var(--accent-amber);
+  cursor: inherit;
+}
+.twin-turbo:hover {
+  color: var(--text-main);
+}
+.twin-turbo.on {
+  color: var(--accent-amber);
+  border-color: rgb(var(--accent-amber-rgb) / 0.5);
+  background: rgb(var(--accent-amber-rgb) / 0.08);
+}
+.twin-turbo.busy {
+  opacity: 0.5;
+  cursor: default;
+}
+.hw-session-btn.connected {
+  background: rgb(var(--accent-lime-rgb) / 0.08);
+  border: 1px solid rgb(var(--accent-lime-rgb) / 0.45);
+  color: var(--accent-lime);
+}
+.capture-control-bar .btn-large:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.hw-session-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.hw-session-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-off);
+}
+.hw-session-dot.on {
+  background: var(--status-ok);
+  box-shadow: 0 0 6px var(--status-ok);
+}
+
+/* ------------------------------------------------------------------ stepping through the captures */
+.capture-nav {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.capture-nav .btn-tiny {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+}
+.capture-nav .btn-tiny:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.capture-nav-index {
+  min-width: 96px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-main);
+}
+.capture-nav-index.pending span {
+  opacity: 0.5; /* the number is ahead of the plots: its capture is still being read */
+}
+.capture-nav-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-off);
+}
+.capture-nav-dot.following {
+  background: var(--status-ok);
+  box-shadow: 0 0 6px var(--status-ok);
+}
+.capture-nav-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40; /* above the cards that follow, below the app header and the capture bar */
+  min-width: min(470px, 90vw);
+  max-width: min(560px, 90vw);
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-menu);
+}
+.capture-nav-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.capture-nav-row:hover {
+  background: rgb(var(--overlay-rgb) / 0.06);
+}
+.capture-nav-row.current {
+  background: rgb(var(--accent-cyan-rgb) / 0.12);
+  color: var(--accent-cyan);
+}
+.capture-nav-number {
+  min-width: 42px;
+  text-align: right;
+  color: var(--text-muted);
+}
+.capture-nav-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.capture-nav-time,
+.capture-nav-rows {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+/* a narrow analysis (the pop-out window at its smallest): the navigator takes a row of its own at the top,
+   instead of leaving the other controls a column a few buttons wide to wrap in */
+.analysis-main {
+  container-type: inline-size;
+}
+@container (max-width: 700px) {
+  .analysis-toolbar {
+    flex-wrap: wrap;
+  }
+  .analysis-toolbar-nav {
+    order: -1;
+    flex: 0 0 100%;
+    display: flex;
+    /* one row, filled from the right: the navigator in the corner, "Compare" to its left */
+    flex-direction: row-reverse;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 6px 12px;
+  }
+}
+.empty-state .capture-nav {
+  margin-top: 10px;
+}
+/* "Import": captures from disk into the list the navigator steps through */
+.capture-import {
+  position: relative;
+  display: inline-flex;
+}
+.analysis-empty-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+.capture-import-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40; /* as the navigator's list */
+  min-width: 290px;
+  padding: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-import);
+}
+.capture-import-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-main);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.capture-import-row:hover {
+  background: rgb(var(--overlay-rgb) / 0.06);
+}
+.capture-import-row svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+.capture-import-row em {
+  display: block;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+/* "Compare": the captures of the session laid over the one on screen */
+.capture-compare {
+  position: relative;
+  display: inline-flex;
+}
+/* as tall as the buttons of the navigator it stands with: the row they share is no taller for it */
+.capture-compare-btn {
+  height: 28px;
+  padding: 0 10px;
+  gap: 6px;
+  font-size: 12px;
+}
+.capture-compare-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.capture-compare-count {
+  min-width: 1ch; /* there with nothing chosen as well: the button keeps its width */
+  font-family: var(--font-mono);
+  font-weight: 600;
+  text-align: center;
+}
+.capture-compare-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 41; /* over the navigator's list, which it is never open together with */
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min(480px, 90vw);
+  padding: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-menu);
+  cursor: default;
+}
+.capture-compare-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.capture-compare-summary {
+  flex: 1;
+}
+.capture-compare-head .btn-tiny:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.capture-compare-filter {
+  flex: none;
+  padding: 4px 10px;
+}
+.capture-compare-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+.capture-compare-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+.capture-compare-row:hover {
+  background: rgb(var(--overlay-rgb) / 0.06);
+}
+.capture-compare-row.chosen {
+  background: rgb(var(--accent-cyan-rgb) / 0.1);
+}
+.capture-compare-row.current .capture-compare-name {
+  color: var(--accent-cyan); /* the capture on screen */
+}
+.capture-compare-row.blocked {
+  opacity: 0.45;
+  cursor: default;
+}
+.capture-compare-row input {
+  flex: none;
+  margin: 0;
+  accent-color: var(--accent-cyan);
+  cursor: inherit;
+}
+.capture-compare-number {
+  min-width: 42px;
+  text-align: right;
+  color: var(--text-muted);
+}
+.capture-compare-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.capture-compare-time {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.capture-compare-note {
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* the signal list with captures compared: a group per capture, and the button that hides the constant signals */
+.analysis-signals .card-header {
+  gap: 6px;
+  padding-right: 8px;
+}
+.analysis-signals .card-title {
+  min-width: 0;
+}
+.analysis-signals .card-title svg {
+  flex: none;
+}
+.analysis-signals .card-title h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap; /* the count growing to "shown / all" must not give the header a second line */
+}
+.analysis-hide-const {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+}
+.analysis-signal-list.grouped {
+  padding-top: 0;
+}
+.analysis-signal-group + .analysis-signal-group {
+  margin-top: 4px;
+}
+.analysis-signal-group-header {
+  position: sticky; /* the capture the rows belong to stays in sight while they scroll */
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 2px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.analysis-signal-group-header:hover {
+  color: var(--text-main);
+}
+.analysis-signal-group-header svg {
+  flex: none;
+}
+/* what folds the group, as a button for the keyboard: it looks like the header it lies in */
+.analysis-signal-group-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.analysis-signal-group-toggle:focus-visible {
+  outline: 1px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+.analysis-signal-group-tag {
+  flex: none;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--accent-cyan);
+}
+.analysis-signal-group[data-kind="screen"] .analysis-signal-group-tag {
+  font-family: inherit;
+  color: var(--text-main);
+}
+.analysis-signal-group-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  white-space: pre;
+  font-family: var(--font-mono);
+}
+/* Cut in the middle: the end of the name always shows (captures of one session differ in it), and of the front
+   as much as there is room for. */
+.analysis-signal-group-name-head {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.analysis-signal-group-name-tail {
+  flex: none;
+}
+.analysis-signal-group-count {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.analysis-signal-group-remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.analysis-signal-group-remove:hover {
+  color: var(--accent-danger);
+  background: rgb(var(--overlay-rgb) / 0.1);
+}
+.analysis-signal-group-note {
+  padding: 5px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.analysis-signal-group-note.error {
+  color: var(--accent-danger);
+}
+.analysis-signal.unusable {
+  cursor: default;
+  opacity: 0.5;
+}
+.analysis-signal-add-all {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.analysis-signal-add-all:hover:not(:disabled) {
+  color: var(--accent-lime);
+  border-color: var(--accent-lime);
+}
+.analysis-signal-add:disabled,
+.analysis-signal-add-all:disabled {
+  cursor: default;
+}
+/* nothing to add from the compared captures; in a group that cannot be used the whole row is dimmed already */
+.analysis-signal:not(.unusable) > .analysis-signal-add-all:disabled {
+  opacity: 0.4;
+}
+.analysis-hide-const:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* a curve pinned to a compared capture: the capture's number in its chip, and in the tables */
+.curve-chip-capture {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: rgb(var(--overlay-rgb) / 0.1);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.stat-short {
+  margin-left: 8px;
+  font-style: normal;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+/* the measurements between two signals: the reference is chosen in the title of their table, and has no values */
+.pair-reference {
+  max-width: 280px;
+  margin: 0 2px;
+  font-family: var(--font-mono);
+}
+.analysis-stats-table td.pair-is-reference {
+  text-align: center;
+  color: var(--text-dim);
+}
+/* one signal in the selected plot: where the table between two signals would be */
+.analysis-tables-hint {
+  padding: 0 12px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.analysis-toolbar .number-input {
+  width: 84px;
+  padding: 4px 8px;
+}
+.analysis-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.analysis-toolbar-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.analysis-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.analysis-cursors {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+.cursor-a {
+  color: var(--accent-amber);
+}
+.cursor-b {
+  color: var(--accent-purple);
+}
+.analysis-cursors {
+  min-height: 38px;
+}
+.analysis-toolbar .btn-seg {
+  white-space: nowrap;
+}
+.analysis-cursors .btn-tiny:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.analysis-readout .analysis-stats-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-family: var(--font-mono);
+  color: var(--text-main);
+}
+.analysis-readout .analysis-stats-title > span:first-child {
+  color: var(--text-muted);
+  font-family: inherit;
+}
+.analysis-readout .analysis-stats-title .btn-tiny {
+  margin-left: auto;
+}
+.analysis-delta {
+  color: var(--accent-lime);
+}
+.analysis-cursors .analysis-hint {
+  font-family: var(--font-sans, inherit);
+  margin-left: 0;
+}
+.analysis-cursors .btn-tiny {
+  margin-left: auto;
+}
+.analysis-pane {
+  overflow: hidden;
+  border-color: var(--border-color);
+}
+.analysis-pane.active {
+  border-color: rgb(var(--accent-cyan-rgb) / 0.45);
+}
+.analysis-pane.drop-ready {
+  border-style: dashed;
+  border-color: var(--accent-lime);
+}
+.analysis-pane-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-color);
+  background: rgb(var(--overlay-rgb) / 0.02);
+}
+.analysis-pane-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  padding-top: 4px;
+}
+.analysis-chips {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.analysis-drop-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding-top: 4px;
+}
+.analysis-pane-actions {
+  display: flex;
+  gap: 4px;
+}
+.analysis-pane-actions .btn-tiny {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.btn-tiny.on {
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+.curve-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px 2px 6px;
+  border: 1px solid;
+  border-radius: 12px;
+  font-size: 11px;
+  background: var(--bg-chip);
+  max-width: 100%;
+}
+.curve-chip.missing {
+  opacity: 0.55;
+}
+.curve-chip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.curve-chip-name {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+.curve-chip b {
+  font-family: var(--font-mono);
+  color: var(--text-main);
+  min-width: 46px;
+  text-align: right;
+}
+.curve-chip em {
+  color: var(--accent-danger);
+  font-style: normal;
+}
+/* the capture of a pinned curve is still being read: it is on its way, not missing */
+.curve-chip em.pending {
+  color: var(--text-dim);
+}
+/* The name of a curve is its switch: a click takes the curve out of the plot, the next one puts it back.
+   Nothing here may change the size of the chip - the header must not move under the pointer. */
+.curve-chip-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.curve-chip-toggle:hover i {
+  outline: 2px solid rgb(var(--overlay-rgb) / 0.3);
+}
+.curve-chip-toggle:focus-visible {
+  outline: 1px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+.curve-chip.off {
+  border-style: dashed;
+  background: transparent;
+}
+.curve-chip.off .curve-chip-name {
+  color: var(--text-muted); /* still to be read: it is what one clicks to get the curve back */
+  text-decoration: line-through;
+}
+.curve-chip.off .curve-chip-toggle:hover .curve-chip-name {
+  color: var(--text-main);
+}
+.chip-btn,
+.chip-select,
+.chip-number {
+  background: rgb(var(--overlay-rgb) / 0.06);
+  border: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  border-radius: 8px;
+  padding: 2px 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.chip-btn {
+  display: inline-flex;
+  align-items: center;
+}
+.chip-btn:hover,
+.chip-select:hover {
+  color: var(--text-main);
+  background: rgb(var(--overlay-rgb) / 0.12);
+}
+.chip-select option {
+  background: var(--bg-card);
+  color: var(--text-main);
+}
+.chip-number {
+  width: 52px;
+  cursor: text;
+}
+.plot-pane-host {
+  width: 100%;
+  background: var(--bg-card);
+}
+.plot-pane-canvas {
+  display: block;
+  touch-action: none;
+}
+.analysis-stats {
+  padding: 8px 12px 10px;
+  overflow-x: auto;
+}
+.analysis-stats-title {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.analysis-stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+.analysis-stats-table th {
+  text-align: right;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+.analysis-stats-table td {
+  text-align: right;
+  padding: 3px 10px;
+  white-space: nowrap;
+  user-select: text;
+}
+.analysis-stats-table th:first-child,
+.analysis-stats-table td:first-child {
+  text-align: left;
+}
+.stat-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+/* a curve that is switched off, in a read-out that keeps its rows (the one inside a spectrum's card) */
+.analysis-stats-table tr.off td {
+  color: var(--text-dim);
+}
+.analysis-stats-table tr.off td:first-child {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+.analysis-drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: var(--accent-cyan);
+  color: var(--drag-ghost-text);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.analysis-pane-title em {
+  display: block;
+  font-style: normal;
+  font-weight: 400;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.plot-pane-host {
+  position: relative;
+}
+.plot-pane-overlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+.analysis-pane .analysis-stats {
+  border-top: 1px solid var(--border-color);
+}
+.analysis-tables:empty:not(.used) {
+  display: none;
+}
+.analysis-tables.used:empty::before {
+  content: "The selected plot has nothing to measure yet.";
+  display: block;
+  padding: 10px 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.analysis-tables {
+  overflow: hidden;
+}
+.analysis-tables-title {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-color);
+  background: rgb(var(--overlay-rgb) / 0.02);
+}
+.analysis-tables-title em {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+.analysis-tables .analysis-stats + .analysis-stats {
+  border-top: 1px solid var(--border-color);
+}
+.btn.on {
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+.analysis-window {
+  padding: 16px 20px;
+}
+.analysis-window .analysis-signals {
+  top: 12px; /* the window of its own has no header */
+  max-height: calc(100vh - 44px);
+}
+.analysis-window-note {
+  margin-bottom: 10px;
+  padding: 6px 12px;
+  border: 1px solid var(--accent-danger);
+  border-radius: var(--radius-md);
+  color: var(--accent-danger);
+  font-size: 12px;
+}
+.analysis-window-note.info {
+  border-color: var(--border-color);
+  color: var(--text-muted);
+}
+.curve-chip b {
+  min-width: 0;
+  display: inline-block;
+  white-space: nowrap;
+  overflow: hidden;
+}

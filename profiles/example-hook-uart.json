@@ -1,0 +1,48 @@
+{
+  "name": "example-hook-uart",
+  "_comment": "Worked example for the command line of ila_capture.py: the hook command and the statistics section. The design is invented and this profile has not run on hardware. Picture a UART receiver in the FPGA part of a Zynq-7000 with an ILA core on its signals, and test firmware on the CPU that sends one frame after the other through a loopback. Before each frame the firmware writes down what it is about to send and calls an empty function; ila_capture.py waits for the CPU to halt there, so every capture holds exactly one frame and is named after it. Replace every name, path and number with your own, then let the profile be checked without hardware: python ila_capture.py --profile profiles/example-hook-uart.json check --hook. The GUI can use the sections hardware and capture of this profile; it has no hook mode. docs/profile-schema.md describes every key.",
+
+  "tools": {
+    "_comment": "The hook command starts xsct and reads the ELF file with nm and objdump. These three are used exactly as written here - they are not searched for, as Vivado is - so a profile for the hook command states them. The paths below are those of an SDK 2019.1 in its default folder, which is also what ila_capture.py takes when a profile states none: put the paths of your own SDK or Vitis installation here, with the nm and objdump of the toolchain your firmware is built with. tools.vivado is left out on purpose: Vivado is searched for (PATH, the XILINX_VIVADO environment variable, the usual installation folders).",
+    "xsct": "C:\\Xilinx\\SDK\\2019.1\\bin\\xsct.bat",
+    "nm": "C:\\Xilinx\\SDK\\2019.1\\gnu\\aarch32\\nt\\gcc-arm-none-eabi\\bin\\arm-none-eabi-nm.exe",
+    "objdump": "C:\\Xilinx\\SDK\\2019.1\\gnu\\aarch32\\nt\\gcc-arm-none-eabi\\bin\\arm-none-eabi-objdump.exe"
+  },
+
+  "hardware": {
+    "_comment": "url: the hw_server that Vivado and xsct both connect to. ltx: the probe file of the bitstream that is loaded. device_filter: the FPGA device on the JTAG chain. Not stated here: core_filter, the xsct target that runs the firmware. Left out, it is core 0 of a Zynq-7000 (name =~ \"*Cortex-A9*#0*\"); another CPU needs its own filter.",
+    "url": "127.0.0.1:3121",
+    "ltx": "C:\\work\\uart-demo\\build\\uart_top.ltx",
+    "device_filter": "xc7z020*"
+  },
+
+  "capture": {
+    "_comment": "trigger: the receiver leaves idle, which is the start bit of a frame. position and sample_period_ns, as an example of how to choose them: at 115200 baud a bit lasts 8.68 us and a frame of 11 bits (start, 8 data, parity, stop) 95.5 us. With an ILA clock of 50 MHz (sample_period_ns 20) that is about 4774 samples, so an ILA core that is 8192 samples deep holds a whole frame behind the 512 samples kept before the trigger. The depth itself is fixed in the bitstream. format both: a .csv and the .ila archive of each capture. out: the folder the session folders are written into; a full path means the same folder for the GUI and for the command line.",
+    "trigger": "rx_busy eq1'bR",
+    "position": 512,
+    "format": "both",
+    "sample_period_ns": 20,
+    "out": "C:\\work\\uart-demo\\captures"
+  },
+
+  "hook": {
+    "_comment": "symbol: the empty function the firmware calls before each frame. The CPU halts at a breakpoint on it, set in your debugger or planted by the hook command with --plant. info_symbol: the variable the firmware fills before the call - first the magic word, which it writes last, then one 32-bit word for each entry of fields, in this order. In this example: step counts the frames; baud_offset_ppm is how far the firmware detunes its baud rate for the frame (negative means slower, so it is listed in signed_fields); tx_byte is the byte it is about to send; last_rx_byte and last_error_flags are what the receiver reported for the frame before. sequence_field: the field that counts up - when it goes backwards the target has rebooted and a new run begins. end_value: the value of step by which the firmware says that the last frame is done. name_template: the file name of a capture, built from {run} and the fields. mode arm_and_collect_next: at each halt the window that was armed at the halt before is collected - it holds the frame sent in between - and the ILA is armed for the next one. magic and end_value may be written as numbers or as text such as \"0xFFFF\".",
+    "symbol": "uart_test_hook",
+    "info_symbol": "uart_test_info",
+    "magic": "0x5EED0001",
+    "fields": ["step", "baud_offset_ppm", "tx_byte", "last_rx_byte", "last_error_flags"],
+    "signed_fields": ["baud_offset_ppm"],
+    "sequence_field": "step",
+    "end_value": "0xFFFF",
+    "name_template": "run{run}_step{step:03d}_byte{tx_byte:02X}_ppm{baud_offset_ppm}",
+    "mode": "arm_and_collect_next"
+  },
+
+  "stats": {
+    "_comment": "What is recorded for each capture in index.csv, and what the commands stats and summary print. mode none: no statistics of values - the bits of a protocol have no meaningful mean or rms (mode magnitude with a value_probe is for amplitude-like data). ctrl_probes: 1-bit probes whose values during the capture are recorded as 0, 1 or 01. event_probes: 1-bit probes whose rising edges are counted. warn_if_high: probes that must stay 0 - a 1 puts a WARNING into the log of the session.",
+    "mode": "none",
+    "ctrl_probes": ["uart_en", "frame_err", "par_err", "overrun"],
+    "event_probes": ["rx_busy", "rx_valid"],
+    "warn_if_high": ["frame_err", "par_err", "overrun"]
+  }
+}

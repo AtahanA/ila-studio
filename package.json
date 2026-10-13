@@ -1,0 +1,57 @@
+{
+  "name": "ila-studio",
+  "private": true,
+  "version": "0.4.0",
+  "description": "Capture and analysis GUI for Vivado ILA (Integrated Logic Analyzer) cores",
+  "keywords": [
+    "fpga",
+    "vivado",
+    "ila",
+    "logic-analyzer",
+    "waveform",
+    "tauri"
+  ],
+  "homepage": "https://github.com/AtahanA/ila-studio#readme",
+  "bugs": {
+    "url": "https://github.com/AtahanA/ila-studio/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AtahanA/ila-studio.git"
+  },
+  "license": "GPL-3.0-or-later",
+  "author": "Atahan Aggunlu",
+  "type": "module",
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.8.1",
+    "lucide-react": "^1.52.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^6.0.2",
+    "eslint": "^10.12.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.1",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.11"
+  }
+}

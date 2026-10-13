@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="22.6667 22.6667 210.6667 210.6667" width="256" height="256"><title>ILA Studio</title>
+<!-- The icon of the application: the header shows this file, and the icons of the program (src-tauri/icons)
+     are made from it with  npx tauri icon src/assets/app-icon.svg  (then remove icons/android and icons/ios).
+     The drawing lies on a canvas of 0 0 256 256; the view is drawn in so far that the body takes 3/4 of the
+     icon and its edges fall on whole pixels at 16, 24, 32, 48 px. -->
+<g fill="none" stroke-linecap="round" stroke-linejoin="round">
+<g stroke="#ff5470" stroke-width="9"><line x1="84" y1="30" x2="84" y2="54"/><line x1="84" y1="202" x2="84" y2="226"/><line x1="30" y1="84" x2="54" y2="84"/><line x1="202" y1="84" x2="226" y2="84"/><line x1="128" y1="30" x2="128" y2="54"/><line x1="128" y1="202" x2="128" y2="226"/><line x1="30" y1="128" x2="54" y2="128"/><line x1="202" y1="128" x2="226" y2="128"/><line x1="172" y1="30" x2="172" y2="54"/><line x1="172" y1="202" x2="172" y2="226"/><line x1="30" y1="172" x2="54" y2="172"/><line x1="202" y1="172" x2="226" y2="172"/></g>
+<rect x="54" y="54" width="148" height="148" rx="22" stroke="#ff5470" stroke-width="10" fill="#ff5470"/>
+<path d="M78,152 L94.7,152 L94.7,104 L111.3,104 L111.3,152 L128.0,152 L128.0,104 L161.3,104 L161.3,152 L178,152" stroke="#ffffff" stroke-width="10"/>
+<circle cx="78" cy="78" r="6" fill="#ffe066" stroke="none"/>
+</g></svg>

@@ -1,0 +1,86 @@
+name: CI
+
+# The checks of CONTRIBUTING.md, on the platform the application is made for. None of them needs Vivado, a board
+# or anything from the network beyond the packages.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The Rust the clippy and test results were last checked with. Raise it together with whatever a newer clippy
+  # asks for; rust-version in src-tauri/Cargo.toml is the oldest Rust that builds the application.
+  RUST_TOOLCHAIN: "1.92.0"
+
+jobs:
+  frontend:
+    name: Frontend (typecheck, lint, test, build)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  rust:
+    name: Rust (clippy, test)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      # The frontend bundle first. A debug build does not read dist/ today - only a release build embeds it -
+      # but the job should not depend on that.
+      - run: npm ci
+      - run: npm run build
+      - name: Install the Rust toolchain
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component clippy --no-self-update
+      - name: Select the Rust toolchain
+        run: rustup default ${{ env.RUST_TOOLCHAIN }}
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+  python:
+    name: Python ${{ matrix.python }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # the oldest Python the scripts promise to run on, and the one the tests were written with
+        python: ["3.8", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install "pytest>=7"
+      - run: python -m pytest

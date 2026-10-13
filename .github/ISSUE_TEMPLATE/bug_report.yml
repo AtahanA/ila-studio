@@ -1,0 +1,83 @@
+name: Bug report
+description: Something does not work, or does not work as the documentation says
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time. Reports from other Vivado versions, cables and device families are
+        especially useful, because the tool has only run with one of each.
+
+        **Before you paste a log:** `ila_log.txt` and the log window name local paths, the hw_server address
+        and the probe names of your design. Take out what is not yours to publish. Never attach a probe file
+        (`.ltx`), a capture or a profile of a proprietary design.
+  - type: input
+    id: version
+    attributes:
+      label: ILA Studio version
+      description: The release you downloaded, or the commit you built.
+      placeholder: "0.4.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+  - type: input
+    id: vivado
+    attributes:
+      label: Vivado version
+      description: Vivado or Vivado Lab Edition. Write "none" if the problem shows without hardware.
+      placeholder: "2017.4"
+    validations:
+      required: true
+  - type: input
+    id: cable
+    attributes:
+      label: Cable and hw_server
+      description: Which JTAG cable, and where hw_server runs (this PC, another PC, the cable itself).
+      placeholder: "SmartLynq, hw_server reached over the network"
+  - type: input
+    id: device
+    attributes:
+      label: Device family
+      placeholder: "Zynq-7000"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Parse File ...
+        2. Connect ...
+        3. Just Capture (Now) ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: The text of the status line, and what you saw.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log excerpt
+      description: The text of "View Error Log" / "View Output", or the last lines of ila_log.txt. It can be marked with the mouse and copied.
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I removed user names, paths, IP addresses and signal names from everything I attached
+          required: true

@@ -1,0 +1,35 @@
+name: Feature request
+description: Something the tool should do, or do differently
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task at the board or at the desk that the tool does not help with today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should the tool do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: How do you manage today?
+      description: A workaround, another tool, a script.
+  - type: input
+    id: setup
+    attributes:
+      label: Your set-up
+      description: Vivado version, cable and device family, if the request depends on them.
+      placeholder: "Vivado 2017.4, SmartLynq, Zynq-7000"
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: Nothing I wrote or attached names a design that is not mine to publish
+          required: true

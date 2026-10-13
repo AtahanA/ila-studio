@@ -1,0 +1,7 @@
+# One line ending in the repository, whatever the editor or the platform writes.
+# Python, Tcl under Vivado and PowerShell all read LF.
+* text=auto eol=lf
+
+*.png  binary
+*.ico  binary
+*.icns binary

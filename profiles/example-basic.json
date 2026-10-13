@@ -1,0 +1,15 @@
+{
+  "name": "example-basic",
+  "_comment": "The smallest useful profile: one hw_server, one probe file, a capture taken at once. Change two values before use. hardware.ltx is the probe file (.ltx) that the implementation run wrote for the bitstream on your board. hardware.url is the address of the hw_server your JTAG cable is attached to (127.0.0.1:3121 is a hw_server on this PC). The rest can stay: device_filter * searches the JTAG chain for the device that carries the ILA; jtag_frequency_hz 0 is automatic (the cable's own JTAG clock, lowered only when it is too fast for the debug hub of the design); trigger now captures the buffer at once - a condition is written \"<probe> <compare-value>\", for example \"frame_start eq1'bR\" for a rising edge. Everything that is not stated takes its default: Vivado is searched for, and captures go to the folder captures - next to the program in the GUI, in the current directory on the command line (capture.out with a full path names another folder). docs/profile-schema.md describes every key. For a profile of your own, copy this file under another name: git tracks only the shipped examples, and ignores every other file in profiles.",
+
+  "hardware": {
+    "url": "127.0.0.1:3121",
+    "ltx": "C:\\path\\to\\top.ltx",
+    "device_filter": "*",
+    "jtag_frequency_hz": 0
+  },
+
+  "capture": {
+    "trigger": "now"
+  }
+}

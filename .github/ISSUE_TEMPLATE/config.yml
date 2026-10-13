@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/AtahanA/ila-studio/security/advisories/new
+    about: Please report a vulnerability in private, not in a public issue. SECURITY.md says what counts as one.

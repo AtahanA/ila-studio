@@ -1,0 +1,86 @@
+# --- Written at run time next to ila_bridge.py -------------------------------------------------------
+# The log names local paths, the hw_server address and probe names: it must never be committed.
+ila_log.txt
+captures/
+/distribute/
+# A capture names the nets of a design in its header row, wherever it was written: capture.out of a profile may
+# name another folder in here, and the command line writes captures\ into the folder it is started in.
+# No .csv belongs to the sources.
+*.csv
+*.csv.gz
+
+# Profiles: only the two shipped examples are tracked, by name. Everything "Save configuration" writes
+# (<name>.json, .json.bak, .json.orig, .json.tmp ...) holds local paths and addresses and stays local -
+# also a profile somebody saves as "example-...". A new shipped example is added here and in make_distribute.ps1.
+/profiles/*
+!/profiles/example-basic.json
+!/profiles/example-hook-uart.json
+
+# Design files that end up next to the scripts (a relative hardware.ltx is resolved against this folder).
+# A probe file lists every debug net of a design.
+*.ltx
+*.ila
+*.bit
+*.bin
+*.elf
+*.xsa
+*.hdf
+
+# --- Node / Vite -------------------------------------------------------------------------------------
+node_modules
+dist
+dist-ssr
+*.local
+coverage
+
+# --- Rust / Tauri (src-tauri/.gitignore says the same) -----------------------------------------------
+/src-tauri/target/
+/src-tauri/gen/schemas/
+
+# --- Python ------------------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+/.venv/
+/venv/
+
+# --- Vivado / xsct droppings (the tools run with this folder as working directory) -------------------
+.Xil/
+vivado*.jou
+vivado*.log
+*.backup.jou
+*.backup.log
+vivado_pid*.str
+vivado_pid*.zip
+hs_err_pid*.log
+hs_err_pid*.dmp
+webtalk*.jou
+webtalk*.log
+usage_statistics_webtalk.*
+ila_tck_reset_*.tcl
+
+# --- Logs --------------------------------------------------------------------------------------------
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Backups and editor files ------------------------------------------------------------------------
+*.bak
+*.bak_*
+*.orig
+.claude/
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+[Dd]esktop.ini
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

@@ -1,0 +1,7 @@
+# Only the configuration of the Python tests (run them with "python -m pytest"). There is no build system and no
+# list of dependencies on purpose: ila_bridge.py and ila_capture.py need nothing but the standard library.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+# no cache provider: the tests leave no .pytest_cache folder in the tree
+addopts = "-q -p no:cacheprovider"
