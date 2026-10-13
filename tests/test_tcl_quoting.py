@@ -4,6 +4,7 @@
 """What is written into a Tcl command. A value that comes from a profile, the command line or the GUI has to
 reach Vivado as one word of text whatever it contains - or be refused before Vivado is started."""
 import os
+import threading
 import types
 
 import pytest
@@ -93,6 +94,83 @@ def test_capture_session_refuses_before_it_makes_its_folder(tmp_path, trigger, r
     args = types.SimpleNamespace(trigger=trigger, out=str(tmp_path / "out"), target="unit")
     with pytest.raises(RuntimeError, match=said):
         ic.Session(args, prof)
+    assert not (tmp_path / "out").exists()
+
+
+# ---------------------------------------------------------------- position, timeout and format
+def test_position_timeout_and_format_default():
+    assert ic.capture_values({}) == (1000, 1, "both")
+    assert ic.capture_values({"position": None, "timeout_min": None, "format": ""}) == (1000, 1, "both")
+
+
+def test_position_and_timeout_reach_the_command_as_they_are_written():
+    # a whole number stays one and a fraction a fraction: the commands of ordinary input are what they were
+    assert "%s %s %s" % ic.capture_values({"position": 0, "timeout_min": 2, "format": "csv"}) == "0 2 csv"
+    assert "%s %s %s" % ic.capture_values({"position": 300, "timeout_min": 0.5, "format": "ila"}) == "300 0.5 ila"
+    # the bridge writes --timeout-min into the key, and that is a float also where it is a whole number
+    assert "%s" % ic.capture_values({"timeout_min": 1.0})[1] == "1.0"
+
+
+def test_format_is_sent_in_small_letters():
+    # any letter case is taken, but the Tcl side knows "csv" and "ila" in small letters only: "CSV" as it is
+    # written would get the .ila as well
+    assert ic.capture_values({"format": "CSV"})[2] == "csv"
+    assert ic.capture_values({"format": " Ila "})[2] == "ila"
+
+
+@pytest.mark.parametrize("capture, said", [
+    ({"position": "12; puts hi"}, "capture.position is '12; puts hi': it must be a whole number of 0 or more "
+                                  "(it is text: write the number without quotes)"),
+    ({"position": "12"}, "capture.position is '12': it must be a whole number of 0 or more (it is text"),
+    ({"position": -1}, "capture.position is -1: it must be a whole number of 0 or more"),
+    ({"position": 12.5}, "capture.position is 12.5: it must be a whole number"),
+    ({"position": True}, "capture.position is True: it must be a whole number"),
+    ({"timeout_min": "2"}, "capture.timeout_min is '2': it must be a number of minutes above 0, at most %d "
+                           "(it is text: write the number without quotes)" % ic.MAX_TIMEOUT_MIN),
+    ({"timeout_min": 0}, "capture.timeout_min is 0: it must be a number of minutes above 0"),
+    ({"timeout_min": -1.5}, "capture.timeout_min is -1.5: it must be a number of minutes above 0"),
+    ({"timeout_min": float("inf")}, "capture.timeout_min is inf: it must be a number"),
+    ({"timeout_min": float("nan")}, "capture.timeout_min is nan: it must be a number"),
+    ({"timeout_min": [1]}, "capture.timeout_min is [1]: it must be a number"),
+    ({"timeout_min": False}, "capture.timeout_min is False: it must be a number"),
+    ({"format": "tar"}, "capture.format is 'tar': it must be one of both, ila, csv"),
+    ({"format": "csv; exec calc"}, "capture.format is 'csv; exec calc': it must be one of both, ila, csv"),
+    ({"format": 5}, "capture.format is 5: it must be one of both, ila, csv"),
+])
+def test_position_timeout_or_format_that_cannot_be_meant_is_refused(capture, said):
+    with pytest.raises(RuntimeError) as refused:
+        ic.capture_values(capture)
+    assert said in str(refused.value)
+
+
+def test_every_value_that_is_wrong_is_named():
+    with pytest.raises(RuntimeError) as refused:
+        ic.capture_values({"position": -1, "timeout_min": 2, "format": "tar"})
+    assert str(refused.value) == ("capture.position is -1: it must be a whole number of 0 or more; "
+                                  "capture.format is 'tar': it must be one of both, ila, csv")
+
+
+def test_longest_wait_for_a_trigger_is_one_this_python_can_wait():
+    # a capture command is waited for ten minutes longer than its trigger; a wait beyond what a lock of this
+    # Python takes would end in an OverflowError inside the driver
+    assert ic.MAX_TIMEOUT_MIN * 60 + 600 <= threading.TIMEOUT_MAX
+    assert ic.capture_values({"timeout_min": ic.MAX_TIMEOUT_MIN})[1] == ic.MAX_TIMEOUT_MIN
+    with pytest.raises(RuntimeError, match="capture.timeout_min is"):
+        ic.capture_values({"timeout_min": ic.MAX_TIMEOUT_MIN + 1})
+
+
+@pytest.mark.parametrize("capture, said", [
+    ({"position": "12; puts hi"}, "capture.position is '12; puts hi'"),
+    ({"timeout_min": "2"}, "capture.timeout_min is '2'"),
+    ({"format": "tar"}, "capture.format is 'tar'"),
+])
+def test_capture_session_refuses_these_before_it_makes_its_folder_too(tmp_path, capture, said):
+    prof = ic.load_profile(None)
+    prof["capture"].update(capture)
+    args = types.SimpleNamespace(trigger="now", out=str(tmp_path / "out"), target="unit")
+    with pytest.raises(RuntimeError) as refused:
+        ic.Session(args, prof)
+    assert said in str(refused.value)
     assert not (tmp_path / "out").exists()
 
 

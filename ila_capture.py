@@ -32,7 +32,7 @@ All CSVs this tool writes are decimal: multi-bit probes as unsigned decimal, 1-b
 Needs Python 3.8+. The Xilinx tools are launched through cmd /c on Windows and directly elsewhere; only the
 Windows path has been exercised.
 """
-import argparse, concurrent.futures, csv, datetime, glob, gzip, json, math, os, queue, re, shutil, statistics, subprocess, sys, tempfile, threading, time, zipfile
+import argparse, concurrent.futures, copy, csv, datetime, glob, gzip, json, math, os, queue, re, shutil, statistics, subprocess, sys, tempfile, threading, time, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -104,19 +104,37 @@ DEFAULT_PROFILE = {
 def load_profile(path):
     """Profile JSON merged over DEFAULT_PROFILE (section by section), so a profile only states what differs.
     What the file itself says is kept next to the result, under "_stated": where a built-in default must not
-    count as something the user asked for, the two can be told apart (see stated)."""
-    prof = {k: dict(v) if isinstance(v, dict) else v for k, v in DEFAULT_PROFILE.items()}
+    count as something the user asked for, the two can be told apart (see stated).
+    ValueError, as a sentence that names the file, for a file that can be read as JSON and still is no profile:
+    one that does not hold an object, or gives a section - a key whose default is one - anything but an object.
+    Profiles are written by hand, a stray null or a list is an easy slip, and left alone it comes up far from
+    here as an AttributeError that does not lead back to the file."""
+    # A copy all the way down: the lists and objects inside a section (hook.call_mnemonics, capture.probe_format)
+    # must not be the very ones of DEFAULT_PROFILE, which every later job of the same process starts from.
+    prof = copy.deepcopy(DEFAULT_PROFILE)
     user = {}
     if path:
-        with open(path, encoding="utf-8") as f:
-            user = json.load(f)
+        try:
+            with open(path, encoding="utf-8") as f:
+                user = json.load(f)
+        except UnicodeDecodeError as e:          # a ValueError too: it gets the sentence the others have
+            raise ValueError(f"{path}: the file is not UTF-8 text ({e.reason} at byte {e.start})") from None
+        if not isinstance(user, dict):
+            raise ValueError(f"{path}: this is no profile: the file must hold one JSON object, {{ ... }}")
         for k, v in user.items():
-            if isinstance(v, dict) and isinstance(prof.get(k), dict):
+            if isinstance(prof.get(k), dict):
+                if not isinstance(v, dict):
+                    raise ValueError(f'{path}: "{k}" must be a JSON object, {{ ... }}')
                 prof[k].update(v)
             else:
                 prof[k] = v
-    if isinstance(prof.get("hook", {}).get("magic"), str):
-        prof["hook"]["magic"] = int(prof["hook"]["magic"], 0)
+    magic = prof["hook"].get("magic")
+    if isinstance(magic, str):
+        try:
+            prof["hook"]["magic"] = int(magic, 0)
+        except ValueError:
+            raise ValueError(f'{path}: hook.magic is {magic!r}: it must be a number, or a number as text '
+                             f'such as "0x5EED0001"') from None
     prof["_stated"] = user
     return prof
 
@@ -363,7 +381,7 @@ def tcl_trigger(trig):
 # beyond these three is refused as well (binary, octal): the CSV readers below take a column for hex or decimal.
 RADIXES = ("UNSIGNED", "SIGNED", "HEX")
 CAPTURE_MODES = ("ALWAYS", "BASIC")
-# What is written for a capture: the choices of --format, and what "watch" accepts as the format of a profile.
+# What is written for a capture: the choices of --format, and what a profile may give as capture.format.
 FILE_FORMATS = ("both", "ila", "csv")
 
 
@@ -380,6 +398,35 @@ def capture_words(cap):
     if wrong:
         raise RuntimeError("; ".join(wrong))
     return words
+
+
+# The longest wait for a trigger, in minutes: what one wait of this Python can last (Repl.cmd waits for the
+# answer of a capture command that long), less the ten minutes such a command is given beyond its trigger wait.
+MAX_TIMEOUT_MIN = int((threading.TIMEOUT_MAX - 600) // 60)
+
+
+def capture_values(cap):
+    """(position, timeout_min, format) of a capture section, as they go into the Tcl commands: the trigger
+    position a whole number of 0 or more, the wait for the trigger a number of minutes above 0, the format one of
+    FILE_FORMATS in small letters. Any letter case of a format is taken - the Tcl side knows the small letters
+    only and writes both files for whatever else it is given. A key that is not there or null (a format: empty)
+    is the built-in default. Like the words above they come from a profile, so anything else is refused with
+    RuntimeError before it could be run as Tcl: text as well, also text that holds a number - JSON has numbers,
+    and a number in quotes is a slip to be told about, not one to be guessed at."""
+    default, wrong = DEFAULT_PROFILE["capture"], []
+    pos, wait = (default[key] if cap.get(key) is None else cap[key] for key in ("position", "timeout_min"))
+    quoted = lambda value: " (it is text: write the number without quotes)" if isinstance(value, str) else ""
+    if isinstance(pos, bool) or not isinstance(pos, int) or pos < 0:
+        wrong.append(f"capture.position is {pos!r}: it must be a whole number of 0 or more" + quoted(pos))
+    if isinstance(wait, bool) or not isinstance(wait, (int, float)) or not 0 < wait <= MAX_TIMEOUT_MIN:
+        wrong.append(f"capture.timeout_min is {wait!r}: it must be a number of minutes above 0, at most "
+                     f"{MAX_TIMEOUT_MIN}" + quoted(wait))
+    fmt = str(cap.get("format") or default["format"]).strip().lower()
+    if fmt not in FILE_FORMATS:
+        wrong.append(f"capture.format is {cap.get('format')!r}: it must be one of {', '.join(FILE_FORMATS)}")
+    if wrong:
+        raise RuntimeError("; ".join(wrong))
+    return pos, wait, fmt
 
 
 def resolve_vivado(path):
@@ -414,15 +461,19 @@ def resolve_vivado(path):
 
 
 def resolve_tcl(path):
-    """The REPL script: an explicit one (relative names are looked up next to this file too, since that is where
-    a GUI's "scripts\\vivado_ila_repl.tcl" lives), else the one shipped with this driver, which is
-    scripts/vivado_ila_repl.tcl next to this file."""
-    cands = [path, os.path.join(HERE, path)] if path else []
-    cands.append(os.path.join(HERE, "scripts", "vivado_ila_repl.tcl"))
+    """The REPL script: the one that is named, else - no name, or an empty one - the one shipped with this
+    driver, which is scripts/vivado_ila_repl.tcl next to this file. A relative name is also looked up next to
+    this file (that is where a GUI's "scripts\\vivado_ila_repl.tcl" lives) and in the scripts folder there (a
+    bare "vivado_ila_repl.tcl" is how set-ups from before that folder name the shipped script).
+    A script that is named and is nowhere is an error. The shipped one is not taken in its place: the session
+    would look as it always does, and whoever works on a script of their own would be editing a file that is
+    never run."""
+    shipped = os.path.join(HERE, "scripts", "vivado_ila_repl.tcl")
+    cands = [path, os.path.join(HERE, path), os.path.join(HERE, "scripts", path)] if path else [shipped]
     for c in cands:
         if os.path.isfile(c):
             return os.path.abspath(c)
-    raise RuntimeError(f"Tcl script not found: {path or cands[-1]}")
+    raise RuntimeError(f"Tcl script not found: {path or shipped}")
 
 
 def launch(exe, *args):
@@ -802,11 +853,14 @@ class Session:
         # The hw_server address, from the command line or a profile: in its one form, or refused. Here, so that
         # no caller can leave it out - it goes into the ila_open command and, for xsct, onto a command line.
         prof["hardware"]["url"] = normalise_url(prof["hardware"].get("url"))
+        # ... and a Tcl script that is named and is not there is said now, not after the session folder is made
+        resolve_tcl(getattr(args, "tcl", None))
         if not ephemeral:
-            # what the capture commands would refuse (tcl_trigger, capture_words) is refused now, before a
-            # session folder is made and Vivado started for it
+            # what the capture commands would refuse (tcl_trigger, capture_words, capture_values) is refused now,
+            # before a session folder is made and Vivado started for it
             tcl_trigger(getattr(args, "trigger", None) or prof["capture"]["trigger"])
             capture_words(prof["capture"])
+            capture_values(prof["capture"])
             stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             self.out = os.path.join(args.out or prof["capture"]["out"], f"{stamp}_{args.target}")
             os.makedirs(self.out, exist_ok=True)
@@ -879,10 +933,19 @@ class Session:
                       if item in viv.lacks]
             what = ([f"it has no {', '.join(sorted(viv.lacks))}"] if viv.lacks else []) + (
                 [f"it is version {version}, this program expects {SCRIPT_VERSION}"] if older else [])
+            # The way out depends on who named the script: nobody (it is the bundled one), the job (the Tcl script
+            # field of the GUI, --tcl) or - for a job of the GUI bridge that names none - the profile. Clearing the
+            # field does nothing about a script the profile names, and there is no field to clear on a command line.
+            if getattr(self.args, "tcl_of_profile", False):
+                named = ", or take tools.tcl_script out of the profile if it names a copy from an earlier release."
+            elif getattr(self.args, "tcl", None):
+                named = (", or clear the Tcl script field (leave out --tcl on a command line) if it names a copy "
+                         "from an earlier release.")
+            else:
+                named = "."
             self.script_note = (f"The Tcl script {path} is older than this program ({'; '.join(what)}): "
                                 + ("; ".join(around) + ". " if around else "")
-                                + "Update the scripts folder together with the program, or clear the Tcl script "
-                                  "field if it names a copy from an earlier release.")
+                                + "Update the scripts folder together with the program" + named)
             self.log("WARNING " + self.script_note)
 
     def select_core(self, viv, info=None):
@@ -1037,14 +1100,15 @@ class Session:
         caller taking window after window hands it to another thread and arms the next window at once."""
         cap = self.prof["capture"]
         prefix = os.path.join(self.out, name)
-        fmt = self.args.format or cap["format"]
+        pos, wait_min, fmt = capture_values(cap)
+        fmt = self.args.format or fmt
         if armed:
             timing = self.viv.cmd(f"ila_collect {tcl_path(prefix)} {fmt} 0.05", timeout=600)
         else:
             radix, cmode = capture_words(cap)
             timing = self.viv.cmd(f"ila_capture {tcl_path(prefix)} {tcl_trigger(self.args.trigger or cap['trigger'])} "
-                                  f"{cap['position']} {cap['timeout_min']} {fmt} {radix} {cmode}",
-                                  timeout=cap["timeout_min"] * 60 + 600)
+                                  f"{pos} {wait_min} {fmt} {radix} {cmode}",
+                                  timeout=wait_min * 60 + 600)
         src = prefix + ".csv" if os.path.exists(prefix + ".csv") else prefix + ".ila"
         if not has_data_rows(src):               # a header-only upload is not a capture, and must not look like one
             for ext in (".csv", ".ila"):
@@ -1063,12 +1127,13 @@ class Session:
         does and returns the statistics."""
         cap = self.prof["capture"]
         prefix = os.path.join(self.out, name)
-        fmt = self.args.format or cap["format"]
+        pos, wait_min, fmt = capture_values(cap)
+        fmt = self.args.format or fmt
         viv.settle()                             # the file of its last window comes first
         radix, cmode = capture_words(cap)
         timing = viv.cmd(f"ila_capture_keep {tcl_trigger(self.args.trigger or cap['trigger'])} "
-                         f"{cap['position']} {cap['timeout_min']} {radix} {cmode}",
-                         timeout=cap["timeout_min"] * 60 + 600)
+                         f"{pos} {wait_min} {radix} {cmode}",
+                         timeout=wait_min * 60 + 600)
         writing = viv.writing = pool.submit(viv.cmd, f"ila_write_last {tcl_path(prefix)} {fmt}", 600)
         wrote = []
 
@@ -1263,7 +1328,8 @@ def cmd_check(args, prof):
                      f"{os.path.abspath(cap['out'])} (the GUI takes it against the program folder)")
     if cap.get("trigger", "now") != "now" and len(str(cap["trigger"]).split()) != 2:
         problems.append(f"capture.trigger must be \"now\" or \"<probe> <compare-value>\", got {cap['trigger']!r}")
-    for refused in (lambda: tcl_trigger(cap.get("trigger", "now")), lambda: capture_words(cap)):
+    for refused in (lambda: tcl_trigger(cap.get("trigger", "now")), lambda: capture_words(cap),
+                    lambda: capture_values(cap)):
         try:
             refused()                            # what a capture would be refused for
         except RuntimeError as e:
@@ -1369,6 +1435,7 @@ def cmd_hook(args, prof):
     calls = elf_callsites(prof, args.elf, h["symbol"])
     n_words = min(1 + len(h["fields"]), max(1, info_size // 4))
     s = Session(args, prof)
+    pos = capture_values(cap)[0]
     s.log(f"hook {h['symbol']} @0x{hook:08x}+{hook_size}, call sites {[hex(c) for c in sorted(calls)]}, "
           f"{h['info_symbol']} @0x{info:08x} ({n_words} words), mode {h.get('mode')}, output {s.out}")
     done, last_seq, run, pending = 0, None, 1, None
@@ -1379,7 +1446,7 @@ def cmd_hook(args, prof):
         s.open_vivado()
         s.open_xsct()
         if h.get("mode") == "arm_and_collect_next":
-            s.viv.cmd("ila_arm " + tcl_trigger(args.trigger or cap["trigger"]) + " " + str(cap["position"]) +
+            s.viv.cmd("ila_arm " + tcl_trigger(args.trigger or cap["trigger"]) + " " + str(pos) +
                       " " + capture_words(cap)[0], timeout=120)
         s.log("waiting for the core to halt at the hook (Ctrl-C to stop)")
         while done < args.count and time.time() < t_end:
@@ -1435,7 +1502,7 @@ def cmd_hook(args, prof):
                     s.xs.cmd("resume", timeout=60)
                     break
                 s.viv.cmd("ila_arm " + tcl_trigger(args.trigger or cap["trigger"]) + " " +
-                          str(cap["position"]) + " " + capture_words(cap)[0], timeout=120)
+                          str(pos) + " " + capture_words(cap)[0], timeout=120)
                 pending = fields
             else:
                 if ended:
@@ -1540,14 +1607,11 @@ def cmd_watch(args, prof):
     fraction of time the ILA was armed; the second is what says how many events were missed."""
     cap, st_cfg = prof["capture"], prof["stats"]
     trig = args.trigger or cap["trigger"]
-    pos = cap["position"]
+    pos, _, stated_fmt = capture_values(cap)    # checked: text from a profile, on its way into a Tcl command
     # --format, else the format the profile file itself states, else csv. The built-in default of a profile
     # ("both") is not taken: writing the .ila takes longer than the upload and the CSV together (see the figures
     # at ila_collect_rearm in the Tcl script), which would slow down every recording that never asked for it.
-    fmt = args.format or str(stated(prof, "capture", "format") or "csv").strip().lower()
-    if fmt not in FILE_FORMATS:                 # text from a profile, on its way into a Tcl command
-        raise RuntimeError(f"capture.format is {stated(prof, 'capture', 'format')!r}: it must be one of "
-                           f"{', '.join(FILE_FORMATS)}")
+    fmt = args.format or (stated_fmt if stated(prof, "capture", "format") else "csv")
     radix, cmode = capture_words(cap)
     arm_cmd = f"ila_arm {tcl_trigger(trig)} {pos} {radix} {cmode}"
     n_clients = max(1, args.writers)
@@ -1963,12 +2027,18 @@ def main():
         prof = apply_overrides(load_profile(args.profile), args)
     except json.JSONDecodeError as e:
         raise SystemExit(f"{args.profile}: invalid JSON at line {e.lineno}, column {e.colno}: {e.msg}")
+    except ValueError as e:                      # JSON, but no profile: the sentence of load_profile names the file
+        raise SystemExit(str(e))
     except OSError as e:                         # no such file, a folder, no permission
         raise SystemExit(f"{args.profile}: the profile cannot be read ({e.strerror or e})")
     if args.position is not None:
         # into the profile, once, where every command reads it: taken as "args.position or the profile's" at each
         # use, --position 0 counted as not given
         prof["capture"]["position"] = args.position
+    if args.format:
+        # ... and so the format: the one that was asked for is the one that is checked (capture_values) and used,
+        # whatever the profile gives in its place
+        prof["capture"]["format"] = args.format
     try:
         rc = {"info": cmd_info, "check": cmd_check, "capture": cmd_capture, "hook": cmd_hook, "watch": cmd_watch,
               "convert": cmd_convert, "summary": cmd_summary, "stats": cmd_stats}[args.cmd](args, prof)

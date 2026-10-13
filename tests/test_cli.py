@@ -179,6 +179,45 @@ def test_profile_that_is_not_there_is_reported_in_a_sentence(cli, tmp_path):
     assert message == "%s: the profile cannot be read (No such file or directory)" % (tmp_path / "gone.json")
 
 
+@pytest.mark.parametrize("text, said", [
+    ("[1, 2]", "this is no profile: the file must hold one JSON object, { ... }"),
+    ('{"capture": null}', '"capture" must be a JSON object, { ... }'),
+    ('{"hardware": "x"}', '"hardware" must be a JSON object, { ... }'),
+])
+def test_profile_that_is_json_but_no_profile_is_reported_in_a_sentence(cli, write, text, said):
+    # valid JSON of the wrong shape: the file and what is wrong with it, as a file that is no JSON gets
+    profile = write("p.json", text)
+    assert cli("--profile", profile, "check") == "%s: %s" % (profile, said)
+
+
+# ---------------------------------------------------------------- position, timeout and format of a profile
+def test_format_of_a_profile_in_capitals_is_the_format_meant(vivado, cli, hardware, write):
+    # sent as it is written, "CSV" made the Tcl side write the .ila as well: it knows the small letters only
+    profile = write("p.json", json.dumps({"capture": {"format": "CSV"}}))
+    assert cli("--profile", profile, *hardware, "capture", "--name", "c") == 0
+    assert capture_commands(vivado)[0].endswith("} {now} 1000 1 csv UNSIGNED ALWAYS")
+
+
+@pytest.mark.parametrize("capture, said", [
+    ({"timeout_min": "2"}, "capture.timeout_min is '2': it must be a number of minutes above 0"),
+    ({"position": "12; puts hi"}, "capture.position is '12; puts hi': it must be a whole number of 0 or more"),
+    ({"format": "tar"}, "capture.format is 'tar': it must be one of both, ila, csv"),
+])
+def test_capture_value_of_a_profile_that_cannot_be_meant_ends_the_run_before_anything_is_started(
+        vivado, cli, hardware, write, tmp_path, capture, said):
+    # text in these keys went into the Tcl command as it was written: "12; puts hi" as a command of its own
+    profile = write("p.json", json.dumps({"capture": capture}))
+    for command in (["capture", "--name", "c"], ["watch", "--count", "1", "--minutes", "0.1"]):
+        assert cli("--profile", profile, *hardware, *command).startswith(said)
+    assert vivado == [] and vivado.started == {} and not (tmp_path / "out").exists()
+
+
+def test_format_and_position_of_the_command_line_are_the_ones_that_are_checked(vivado, cli, hardware, write):
+    profile = write("p.json", json.dumps({"capture": {"format": "tar", "position": "12"}}))
+    assert cli("--profile", profile, *hardware, "capture", "--name", "c", "--format", "csv", "--position", "7") == 0
+    assert capture_commands(vivado)[0].endswith("} {now} 7 1 csv UNSIGNED ALWAYS")
+
+
 # A run that fails ends with the sentence alone and the exit code 1: main leaves through SystemExit with the
 # sentence, which Python prints as it is. A traceback would be any other exception coming out of main.
 @pytest.fixture
@@ -305,6 +344,28 @@ def test_script_with_a_lower_version_is_said_to_be_older(vivado, cli, hardware, 
         ic.resolve_tcl(None), ic.SCRIPT_VERSION - 1, ic.SCRIPT_VERSION) in capsys.readouterr().out
 
 
+def test_way_out_of_an_older_script_fits_who_named_it(vivado, cli, hardware, write, capsys):
+    vivado.script = "version=%d;missing=" % (ic.SCRIPT_VERSION - 1)
+
+    def warned(*options):
+        cli(*hardware, *options, "info")
+        (line,) = [line for line in capsys.readouterr().out.splitlines() if "WARNING The Tcl script" in line]
+        return line.split("): ")[1]
+
+    # nobody named the bundled script: there is no field to clear and no option to leave out
+    assert warned() == "Update the scripts folder together with the program."
+    assert warned("--tcl", write("mine.tcl", "")) == (
+        "Update the scripts folder together with the program, or clear the Tcl script field (leave out --tcl on a "
+        "command line) if it names a copy from an earlier release.")
+
+
+def test_tcl_script_that_is_not_there_ends_the_run_before_anything_is_started(vivado, cli, hardware, tmp_path):
+    # not: Vivado started with the bundled script, and not a word about it
+    for command in (["info"], ["capture", "--name", "c"], ["watch", "--count", "1", "--minutes", "0.1"]):
+        assert cli(*hardware, "--tcl", "my_repl.tcl", *command) == "Tcl script not found: my_repl.tcl"
+    assert vivado == [] and vivado.started == {} and not (tmp_path / "out").exists()
+
+
 # ---------------------------------------------------------------- real processes, no hardware
 def run(app, script, *args, **env):
     """One of the two scripts of the copy, started the way a person or the GUI starts it."""
@@ -334,9 +395,12 @@ def test_check_passes_a_profile_whose_vivado_is_found_by_searching(app, write, t
 
 
 def test_failed_run_prints_one_line_and_exits_with_1(app, tmp_path):
-    # no traceback. Neither of the two gets as far as looking for Vivado
+    # no traceback. None of them gets as far as looking for Vivado
+    (tmp_path / "list.json").write_text("[1, 2]")        # JSON, but no profile
     for argv in (["--profile", str(tmp_path / "gone.json"), "check"],
-                 ["capture", "--name", "c", "--trigger", "a}b eq1", "--out", str(tmp_path / "out")]):
+                 ["--profile", str(tmp_path / "list.json"), "check"],
+                 ["capture", "--name", "c", "--trigger", "a}b eq1", "--out", str(tmp_path / "out")],
+                 ["capture", "--name", "c", "--tcl", "my_repl.tcl", "--out", str(tmp_path / "out")]):
         done = run(app, "ila_capture.py", *argv)
         assert done.returncode == 1 and done.stdout == ""
         assert len(done.stderr.splitlines()) == 1 and "Traceback" not in done.stderr

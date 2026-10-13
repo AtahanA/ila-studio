@@ -44,11 +44,11 @@ that is a vulnerability and in scope:
 - probe files (`.ltx`) and capture files (`.csv`, `.csv.gz`, `.ila`);
 - what is typed into the GUI: the hw_server address, the device filter, a trigger, a capture name, the name of
   a profile;
-- in a profile: the address, paths, filters, the trigger, `capture.radix` and `capture.capture_mode`.
+- in a profile: the address, paths, filters, the trigger, `capture.radix`, `capture.capture_mode`,
+  `capture.format`, `capture.position` and `capture.timeout_min`.
 
 Known gaps:
 
-- `capture.format`, `capture.position` and `capture.timeout_min` are not checked when they come from a profile.
 - The hook mode hands `hardware.core_filter` to xsct through `cmd /c` as it is written.
 - A capture or probe file is read into memory whole, without a size limit.
 

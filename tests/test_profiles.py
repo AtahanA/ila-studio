@@ -39,12 +39,64 @@ def test_hook_magic_may_be_written_in_hex(write):
 
 
 def test_what_the_file_itself_says_can_be_told_from_the_defaults(write):
-    prof = ic.load_profile(write("p.json", json.dumps({"capture": {"position": 300}, "stats": "none"})))
+    prof = ic.load_profile(write("p.json", json.dumps({"capture": {"position": 300}})))
     assert prof["capture"]["format"] == "both"               # the default ...
     assert ic.stated(prof, "capture", "format") is None      # ... which this file never asked for
     assert ic.stated(prof, "capture", "position") == 300
-    assert ic.stated(prof, "stats", "mode") is None          # a section that is no object states no keys
+    assert ic.stated(prof, "stats", "mode") is None          # a section the file does not have states no keys
     assert ic.stated(ic.load_profile(None), "capture", "position") is None
+
+
+def test_loaded_profile_shares_nothing_with_the_defaults():
+    # not the lists and objects inside a section either: a change to one profile must not reach the next job
+    prof = ic.load_profile(None)
+    prof["hook"]["call_mnemonics"].append("blx")
+    prof["stats"]["ctrl_probes"].append("rx_valid")
+    prof["capture"]["probe_format"]["adc_data"] = "signed"
+    again = ic.load_profile(None)
+    assert "blx" not in again["hook"]["call_mnemonics"]
+    assert (again["stats"]["ctrl_probes"], again["capture"]["probe_format"]) == ([], {})
+
+
+# ---------------------------------------------------------------- a file that is JSON, but no profile
+# Each ends in one sentence that names the file and what is wrong with it - not in an AttributeError
+@pytest.mark.parametrize("document", ["[1, 2]", '"my-board"', "5", "null"])
+def test_file_that_holds_no_json_object_is_no_profile(write, document):
+    path = write("p.json", document)
+    with pytest.raises(ValueError) as refused:
+        ic.load_profile(path)
+    assert str(refused.value) == path + ": this is no profile: the file must hold one JSON object, { ... }"
+
+
+@pytest.mark.parametrize("section, given", [("capture", None), ("hardware", "x"), ("tools", [1, 2]), ("hook", 5),
+                                            ("stats", True)])
+def test_section_that_is_no_json_object_is_refused(write, section, given):
+    path = write("p.json", json.dumps({"name": "my-board", section: given}))
+    with pytest.raises(ValueError) as refused:
+        ic.load_profile(path)
+    assert str(refused.value) == '%s: "%s" must be a JSON object, { ... }' % (path, section)
+
+
+def test_key_that_is_no_section_may_hold_anything(write):
+    # only the keys whose default is a section are sections: the rest is the file's own business
+    prof = ic.load_profile(write("p.json", json.dumps({"_comment": None, "gui": {"mode": "just_capture"},
+                                                       "notes": ["a", "list"]})))
+    assert (prof["_comment"], prof["gui"], prof["notes"]) == (None, {"mode": "just_capture"}, ["a", "list"])
+
+
+def test_hook_magic_that_is_no_number_is_said_with_the_file(write):
+    path = write("p.json", json.dumps({"hook": {"magic": "5EED"}}))      # hex without the 0x
+    with pytest.raises(ValueError) as refused:
+        ic.load_profile(path)
+    assert str(refused.value).startswith(path + ": hook.magic is '5EED': it must be a number")
+
+
+def test_file_that_is_not_utf8_is_said_with_the_file(tmp_path):
+    (tmp_path / "p.json").write_bytes(b'{"name": "my-board \xff"}')
+    with pytest.raises(ValueError) as refused:
+        ic.load_profile(str(tmp_path / "p.json"))
+    assert str(refused.value).startswith("%s: the file is not UTF-8 text (" % (tmp_path / "p.json"))
+    assert not isinstance(refused.value, UnicodeDecodeError)             # whose own text does not name the file
 
 
 # ---------------------------------------------------------------- the command line over the profile
@@ -130,6 +182,22 @@ def test_name_that_is_no_text_falls_back_to_the_file_name(profiles):
     assert (entry["name"], entry["comment"]) == ("board", "")
 
 
+@pytest.mark.parametrize("text", ["[1, 2]", '{"hardware": "x"}', '{"capture": null}', '{"name": "n", "stats": []}'])
+def test_file_that_is_json_but_no_profile_is_listed_with_what_is_wrong(profiles, text):
+    (profiles / "odd.json").write_text(text)
+    (entry,) = ib.list_profiles()
+    assert (entry["name"], entry["data"], entry["ltxExists"]) == ("odd", {}, False)
+    # the sentence a job with this file is refused with, less the name of the file - which the entry has
+    with pytest.raises(ValueError) as refused:
+        ic.load_profile(entry["path"])
+    assert str(refused.value) == entry["path"] + ": " + entry["error"]
+
+
+def test_sections_the_list_knows_are_those_of_the_driver():
+    # the list is made without the driver, so it names them itself
+    assert set(ib.PROFILE_SECTIONS) == {key for key, value in ic.DEFAULT_PROFILE.items() if isinstance(value, dict)}
+
+
 def test_only_json_files_are_profiles_and_they_come_by_name(profiles):
     for name in ("b.json", "a.json", "a.json.bak", "notes.txt"):
         (profiles / name).write_text("{}")
@@ -153,10 +221,11 @@ def test_example_profiles_are_shipped():
 @pytest.mark.parametrize("path", EXAMPLES, ids=os.path.basename)
 def test_shipped_example_profile_can_be_used(path):
     """It loads, and holds nothing that a capture refuses before it starts: address, trigger, radix, capture
-    mode, probe formats."""
+    mode, position, timeout, format, probe formats."""
     prof = ic.load_profile(path)
     ic.normalise_url(prof["hardware"]["url"])
     ic.tcl_trigger(prof["capture"]["trigger"])
     ic.capture_words(prof["capture"])
+    ic.capture_values(prof["capture"])
     ic.probe_format_map(prof["capture"]["probe_format"])
     assert isinstance(prof["hook"]["magic"], int)

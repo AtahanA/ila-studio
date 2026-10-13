@@ -81,7 +81,8 @@ The card "Hardware & ILA Core Input".
   is shown after **Connect**. Only the XML form that Vivado 2017.4 writes is read; the JSON form (a file that
   begins with `{ "ltx_root"`) is refused with "Failed to parse LTX", and **Connect** then lists the probes.
 - **Vivado Tcl Script (.tcl)**: leave it empty to use the bundled `scripts\vivado_ila_repl.tcl`. A script
-  named here is run by Vivado, so name only a script you trust.
+  named here is run by Vivado, so name only a script you trust. A path that does not exist ends the job with
+  `Tcl script not found: <path>`; the bundled script is not run in its place.
 - **hw_server URL**: `host:port`, e.g. `127.0.0.1:3121` for a hw_server on this PC or `192.0.2.10:3121` for a
   cable on another PC. Port 3121 is added when none is given. An IPv6 address is written in brackets:
   `[::1]:3121`. Text that is not an address is refused.
@@ -382,7 +383,9 @@ about 10 ms for each curve and frame on the development PC and made the view stu
 **Profile list.** The Profile list in the header applies a profile (`profiles\*.json` in the program folder) to
 the page. "-- Custom Configuration --" is the page without a profile. The selected profile is passed along
 with every hardware job, so what it names beyond the page (the Vivado to start, the folder of the captures)
-is used as well; see the [profile reference](profile-schema.md).
+is used as well; see the [profile reference](profile-schema.md). If its file is no longer there - renamed or
+deleted after the list was read - a job ends with `profile not found: <path>`: select another profile or
+"-- Custom Configuration --".
 
 **Save** (the button next to the Profile list) opens "Save configuration": it saves the capture tab as it
 stands as a profile under a name you type - a file in `profiles\` in the program folder - and from then on it
@@ -487,8 +490,9 @@ name of the session folder), `--trigger`, `--position` and `--format`. Without a
 captures go to `captures\` in the current directory. `--server` takes what the hw_server field of the GUI
 takes, and text that is no address is refused before anything is started.
 
-A run that cannot do its work - no Vivado, no connection, a profile that cannot be read, an address or a
-trigger that cannot be used - prints one line that says why and ends with exit code 1. `watch` and `hook` log
+A run that cannot do its work - no Vivado, no connection, a profile that cannot be read or is no profile, a
+script named with `--tcl` that does not exist, an address, a trigger or a capture setting of the profile that
+cannot be used - prints one line that says why and ends with exit code 1. `watch` and `hook` log
 an error that ends them and then exit with 1 as well, and so does a `watch` that gave up after too many
 failures in a row (`--max-retries`).
 

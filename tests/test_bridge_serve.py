@@ -57,8 +57,13 @@ def job(*argv):
     (job("query-hardware", "--server", "a[exec calc.exe]::", "--ltx", "top.ltx"), False,
      "'a[exec calc.exe]::' is not a hw_server address"),
     (job("run-tcl", "--tcl", "nowhere.tcl"), False, "Tcl script not found: nowhere.tcl"),
+    # a profile that is named and is not there: no job with the built-in defaults in its place
+    (job("query-hardware", "--profile", "profiles/gone.json", "--ltx", "top.ltx"), False,
+     "profile not found: profiles/gone.json"),
+    # an empty --tcl is an answer of its own - the bundled script - and the job goes on to its next check
+    (job("query-hardware", "--tcl", "", "--ltx", "gone.ltx"), False, "probe file not found"),
 ], ids=["disconnect", "not-json", "not-a-job", "unknown-command", "incomplete-command", "no-probe-file",
-        "no-address", "no-script"])
+        "no-address", "no-script", "no-profile", "empty-script"])
 def test_job_is_answered(ask, line, success, said):
     answer = ask(line)
     assert answer["success"] is success

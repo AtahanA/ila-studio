@@ -151,6 +151,11 @@ def parse_ltx_file(ltx_path):
 
 
 # ---------------------------------------------------------------- offline: profiles
+# The sections of a profile: the keys that hold a JSON object, which are those of DEFAULT_PROFILE in the driver.
+# They are written out here because the list is read at every start of the GUI, without the driver (see driver).
+PROFILE_SECTIONS = ("tools", "hardware", "capture", "hook", "stats")
+
+
 def list_profiles():
     profiles = []
     if os.path.isdir(PROFILES_DIR):
@@ -163,6 +168,13 @@ def list_profiles():
             try:
                 with open(p_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                # JSON, but no profile: listed with the sentence a job with this file would be refused with (see
+                # load_profile in the driver), not with the AttributeError of the lines below
+                if not isinstance(data, dict):
+                    raise ValueError("this is no profile: the file must hold one JSON object, { ... }")
+                for key in PROFILE_SECTIONS:
+                    if key in data and not isinstance(data[key], dict):
+                        raise ValueError(f'"{key}" must be a JSON object, {{ ... }}')
                 ltx = (data.get("hardware") or {}).get("ltx") or ""
                 # a profile is a file anyone can edit: a name or a comment that is no text is not passed on as one
                 name, comment = data.get("name"), data.get("_comment")
@@ -595,6 +607,24 @@ def answer(s, result):
         end_session(s)
 
 
+def job_profile(a):
+    """The profile a job runs with: the file --profile names laid over the built-in defaults, or the defaults
+    alone when the job names none - which is what the page sends for "-- Custom Configuration --".
+    A file that is named and is not there is no reason to go on with the defaults: what the page does not send
+    itself comes from the profile - which Vivado, which cable of a hw_server with several, the folder of the
+    captures - and a job that drops all of that without a word captures through another cable or into another
+    folder. RuntimeError, as a sentence that names the file, for that and for a file that is no profile."""
+    path = a.profile or None
+    if path and not os.path.isfile(path):
+        raise RuntimeError(f"profile not found: {path}")
+    try:
+        return driver().load_profile(path)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"{path}: invalid JSON at line {e.lineno}, column {e.colno}: {e.msg}")
+    except ValueError as e:                                # JSON, but no profile: the driver's sentence
+        raise RuntimeError(str(e))
+
+
 def make_session(a, ephemeral):
     """A driver Session whose every log line also goes to stdout (live progress in the GUI) and ila_log.txt."""
     ic = driver()
@@ -611,17 +641,13 @@ def make_session(a, ephemeral):
                 bridge_log(msg)
             say(line)
 
-    profile = a.profile if a.profile and os.path.isfile(a.profile) else None
     ns = types.SimpleNamespace(
         ltx=a.ltx or None, server=a.server or None, device=a.device or None, ila_index=a.ila_index,
-        jtag_hz=a.jtag_hz, tcl=a.tcl or None, target=getattr(a, "target", "unit"), out=getattr(a, "out", None),
+        jtag_hz=a.jtag_hz, tcl=None, target=getattr(a, "target", "unit"), out=getattr(a, "out", None),
         trigger=getattr(a, "trigger", None) or None, position=getattr(a, "position", None),
         format=getattr(a, "format", None), engines=getattr(a, "engines", 1),
         ila_cell=getattr(a, "ila_cell", "") or None)
-    try:
-        prof = ic.apply_overrides(ic.load_profile(profile), ns)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"{profile}: invalid JSON at line {e.lineno}, column {e.colno}: {e.msg}")
+    prof = ic.apply_overrides(job_profile(a), ns)
     hw, cap = prof["hardware"], prof["capture"]
     # The driver's check of an address, the one the command line goes by as well. The session would apply it by
     # itself; it is asked here because the log line and the reachability check below come before the session.
@@ -632,17 +658,31 @@ def make_session(a, ephemeral):
         hw["ltx"] = os.path.abspath(os.path.join(HERE, hw["ltx"]))
     if not os.path.isfile(hw["ltx"]):
         raise RuntimeError(f"probe file not found: {hw['ltx']}")
-    if not ns.tcl:                                         # a profile may name its own REPL script
-        ns.tcl = (prof.get("tools") or {}).get("tcl_script") or None
-    if ns.tcl and not (os.path.isfile(ns.tcl) or os.path.isfile(os.path.join(HERE, ns.tcl))):
-        bridge_log(f"Tcl script {ns.tcl} not found, using the bundled one")
-        ns.tcl = None
+    # The Tcl script of the session (ns.tcl: its full path, or None for the bundled one). --tcl decides wherever
+    # it is given: a script that is named has to be there, and an empty one IS the bundled script - that is how
+    # an emptied Tcl script field can mean the bundled script while the selected profile names another. Only a
+    # job that does not say (no --tcl) uses the script of the profile, tools.tcl_script. Should that one be
+    # missing, the bundled script is used after all, and the job says so: a profile saved on another PC names a
+    # path of that PC, and failing here would leave no way to use it short of editing the file.
+    script_missing = ""
+    if a.tcl is not None:
+        ns.tcl = ic.resolve_tcl(a.tcl.strip()) if a.tcl.strip() else None
+    else:
+        named = str(prof["tools"].get("tcl_script") or "").strip()
+        try:
+            ns.tcl = ic.resolve_tcl(named) if named else None
+            ns.tcl_of_profile = bool(named)                # check_script: whose script it is, should it be older
+        except RuntimeError:
+            script_missing = (f"The Tcl script {named} that the profile names (tools.tcl_script) was not found: "
+                              f"the bundled one is used instead")
     if not os.path.isabs(cap.get("out") or ""):
         cap["out"] = os.path.join(HERE, cap.get("out") or "captures")
     if getattr(a, "timeout_min", None):
         cap["timeout_min"] = a.timeout_min
     if getattr(a, "position", None) is not None:           # the driver takes the position from here; 0 is one too
         cap["position"] = a.position
+    if ns.format:                                          # ... and checks the format it finds here: the job's
+        cap["format"] = ns.format
     if getattr(a, "probe_formats", None) is not None:
         # the GUI's choice per probe, whole: it replaces what the profile says, so that nothing is written in a
         # format the probe list does not show
@@ -669,6 +709,9 @@ def make_session(a, ephemeral):
     s = GuiSession(ns, prof, ephemeral=ephemeral)
     if a.stop_file:                                        # the GUI's stop signal instead of the session's own
         s.stop_file, s.own_stop_file = a.stop_file, False
+    s.script_missing = script_missing                      # for the answer of the job as well, see script_note
+    if script_missing:
+        s.log(f"NOTE {script_missing}")
     return s, prof
 
 
@@ -709,10 +752,12 @@ def probes_from(listing, core):
 
 
 def script_note(s):
-    """For the answer of a job that opened a session: what the driver found wrong with the REPL script (see
-    check_script) - said where the person looks, not only in the log."""
-    note = getattr(s, "script_note", "") if s and not getattr(s, "reused", False) else ""
-    return f". {note}" if note else ""
+    """For the answer of a job that opened a session: that the script its profile names was not there (see
+    make_session), and what the driver found wrong with the REPL script (see check_script) - said where the
+    person looks, not only in the log."""
+    if not s or getattr(s, "reused", False):
+        return ""
+    return "".join(f". {note}" for note in (getattr(s, "script_missing", ""), getattr(s, "script_note", "")) if note)
 
 
 def cmd_query_hardware(a):
@@ -975,10 +1020,11 @@ def cmd_run_tcl(a):
     Vivado batch session and its output returned."""
     ic = driver()
     try:
-        # a path that was typed but does not exist is an error here, not a reason to run the bundled script
-        if a.tcl and not (os.path.isfile(a.tcl) or os.path.isfile(os.path.join(HERE, a.tcl))):
-            raise RuntimeError(f"Tcl script not found: {a.tcl}")
-        tcl = ic.resolve_tcl(a.tcl)
+        # a path that was typed but does not exist is an error (resolve_tcl), not a reason to run the bundled script
+        tcl = ic.resolve_tcl((a.tcl or "").strip())
+        # ... and so is a profile that is gone. It is asked for here, before the open hardware session is closed
+        # for the script: a job that is refused leaves the session as it is. (A connect asks for it itself.)
+        prof = None if "repl" in os.path.basename(tcl).lower() else job_profile(a)
     except RuntimeError as e:
         emit("@@RESULT", {"success": False, "message": str(e), "cores": [], "probes": [], "rawOutput": ""})
         return 1
@@ -992,7 +1038,6 @@ def cmd_run_tcl(a):
         drop_kept("a Tcl script was run")
     p = None
     try:
-        prof = ic.load_profile(a.profile if a.profile and os.path.isfile(a.profile) else None)
         argv = ic.launch(ic.resolve_vivado(prof["tools"]["vivado"]), "-mode", "batch", "-nolog", "-nojournal",
                          "-notrace", "-source", tcl)
         bridge_log(f"---- run-tcl: {' '.join(argv)}")
@@ -1125,7 +1170,9 @@ def cmd_serve():
 def add_hw_args(p):
     p.add_argument("--server", default="")
     p.add_argument("--ltx", default="")
-    p.add_argument("--tcl", default="")
+    p.add_argument("--tcl", default=None,
+                   help="the Tcl script of the session; empty: the bundled one. Left out, the script the profile "
+                        "names (tools.tcl_script) is used, and the bundled one when it names none")
     p.add_argument("--device", default="")
     p.add_argument("--jtag-hz", type=int, default=None, help="0 or omitted: automatic")
     p.add_argument("--ila-index", type=int, default=None)

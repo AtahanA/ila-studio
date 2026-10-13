@@ -4,6 +4,7 @@
 """Finding what a session starts: Vivado, which need not be where the profile says, and the Tcl script."""
 import os
 import re
+import types
 
 import pytest
 
@@ -89,6 +90,38 @@ def test_script_of_ones_own_is_used(write):
     assert ic.resolve_tcl(mine) == mine
 
 
+def test_script_that_is_named_and_not_there_is_an_error(monkeypatch, tmp_path):
+    # not the shipped script in its place, without a word: whoever named it would be editing a file never run
+    monkeypatch.chdir(tmp_path)
+    for named in ("my_repl.tcl", os.path.join("scripts", "my_repl.tcl"), str(tmp_path / "my_repl.tcl")):
+        with pytest.raises(RuntimeError) as not_found:
+            ic.resolve_tcl(named)
+        assert str(not_found.value) == "Tcl script not found: " + named
+
+
+def test_no_name_or_an_empty_one_is_the_shipped_script():
+    assert ic.resolve_tcl("") == ic.resolve_tcl(None)
+
+
 def test_relative_script_name_is_also_looked_up_next_to_the_driver(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)                          # the way the GUI names it, from any working directory
     assert ic.resolve_tcl(os.path.join("scripts", "vivado_ila_repl.tcl")) == ic.resolve_tcl(None)
+
+
+def test_shipped_script_may_be_named_by_its_bare_file_name(monkeypatch, tmp_path):
+    # how set-ups from before the scripts folder name it: found in that folder, where it is now
+    monkeypatch.chdir(tmp_path)
+    assert ic.resolve_tcl("vivado_ila_repl.tcl") == ic.resolve_tcl(None)
+
+
+def test_script_in_the_working_directory_comes_before_one_next_to_the_driver(monkeypatch, write, tmp_path):
+    mine = write("vivado_ila_repl.tcl", "")              # a script of one's own under the name of the shipped one
+    monkeypatch.chdir(tmp_path)
+    assert ic.resolve_tcl("vivado_ila_repl.tcl") == mine
+
+
+def test_session_is_not_made_with_a_script_that_is_not_there(tmp_path):
+    args = types.SimpleNamespace(tcl="my_repl.tcl", trigger="now", out=str(tmp_path / "out"), target="unit")
+    with pytest.raises(RuntimeError, match="Tcl script not found: my_repl.tcl"):
+        ic.Session(args, ic.load_profile(None))
+    assert not (tmp_path / "out").exists()               # said before a session folder is made for it

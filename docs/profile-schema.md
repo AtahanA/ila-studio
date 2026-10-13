@@ -33,13 +33,16 @@ script that Vivado runs (`tools.tcl_script`). Whoever uses a profile runs what i
 that you would also run as a script**, and read a profile that somebody else wrote before you select it.
 
 The other values of a profile are data. The address, the paths, the filters and the trigger are passed to
-Vivado as text; text that is no hw_server address, and an unknown `radix` or `capture_mode`, are refused.
-`capture.format`, `capture.position` and `capture.timeout_min` are not checked when they come from a profile
-(`watch` alone refuses a `format` it does not know). See [SECURITY.md](../SECURITY.md).
+Vivado as text; text that is no hw_server address, an unknown `radix`, `capture_mode` or `format`, and a
+`position` or `timeout_min` that is not a number a capture can use, are refused before Vivado is started. See
+[SECURITY.md](../SECURITY.md).
 
 ## How a profile is read
 
-- The file is UTF-8 and holds one JSON object.
+- The file is UTF-8 and holds one JSON object. A file that holds anything else (a list, a text), or that gives
+  one of the sections `tools`, `hardware`, `capture`, `hook` or `stats` anything but an object, is refused:
+  the command line and a job of the GUI answer with one sentence that names the file and what is wrong, for
+  example `"capture" must be a JSON object, { ... }`.
 - Every key is optional. A profile is laid over the built-in defaults (`DEFAULT_PROFILE` in `ila_capture.py`)
   section by section, so it only states what differs. Inside a section single keys are replaced; a list
   (`hook.fields`, `stats.ctrl_probes` ...) is replaced as a whole.
@@ -69,7 +72,7 @@ uses the same code to connect and to capture. "Page" means the capture tab of th
 | `xsct` | path | `C:\Xilinx\SDK\2019.1\bin\xsct.bat` | The xsct that watches the CPU. Used by the `hook` command only, and exactly as written: there is no search. |
 | `nm` | path | `C:\Xilinx\SDK\2019.1\gnu\aarch32\nt\gcc-arm-none-eabi\bin\arm-none-eabi-nm.exe` | Reads the address and size of the hook symbols from the ELF file. `hook`, and `check --elf`. No search. |
 | `objdump` | path | `C:\Xilinx\SDK\2019.1\gnu\aarch32\nt\gcc-arm-none-eabi\bin\arm-none-eabi-objdump.exe` | Finds the places where the hook function is called. `hook`, and `check --elf`. No search. |
-| `tcl_script` | path | none | A Tcl script of your own in place of `scripts\vivado_ila_repl.tcl`. Read by the GUI only: the page shows it in the field "Vivado Tcl Script (.tcl)", and a job that names no script (the field is empty) uses the one of the selected profile. A script that cannot be found is left out with a line in `ila_log.txt`, and the bundled one is used. On the command line of `ila_capture.py` the option `--tcl` does this; the key is not read there. |
+| `tcl_script` | path | none | A Tcl script of your own in place of `scripts\vivado_ila_repl.tcl`. Read by the GUI only: the page shows it in the field "Vivado Tcl Script (.tcl)", and a job that names no script (the field is empty) uses the one of the selected profile. If that file does not exist, the bundled script is used and the job says so, in its answer and in the log. A script that the field itself names and that does not exist ends the job: `Tcl script not found: <path>`. On the command line of `ila_capture.py` the option `--tcl` names the script, with the same error for a file that does not exist; the key is not read there. |
 
 The defaults are the folders that Vivado 2017.4 and the SDK 2019.1 install into. They are only defaults: a
 profile for the `hook` command states `xsct`, `nm` and `objdump` of its own installation (SDK or Vitis).
@@ -97,14 +100,17 @@ Vivado or xsct is started, and `check` reports it.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `trigger` | text | `"now"` | `"now"` (capture at once) or `"<probe> <compare-value>"`, e.g. `"frame_start eq1'bR"`. See below. |
-| `position` | integer | `1000` | Samples kept before the trigger. |
-| `timeout_min` | number | `1` | Minutes to wait for the trigger. |
-| `format` | text | `"both"` | What is written for each capture: `both`, `ila` or `csv`. The `watch` command uses the key only when the profile states it, and writes `csv` when it does not: writing the `.ila` as well would slow every recording down. `--format` wins in every command. |
+| `position` | integer | `1000` | Samples kept before the trigger: a whole number, 0 or more. Anything else is refused. |
+| `timeout_min` | number | `1` | Minutes to wait for the trigger: a number above 0, with or without a fraction (`0.5`). Anything else is refused. The longest wait is 71572 minutes (about 49 days) on Windows. |
+| `format` | text | `"both"` | What is written for each capture: `both`, `ila` or `csv` (any letter case). Anything else is refused. The `watch` command uses the key only when the profile states it, and writes `csv` when it does not: writing the `.ila` as well would slow every recording down. `--format` wins in every command. |
 | `sample_period_ns` | number | `0` | The period of the ILA clock in ns. `0` means unknown: times are then given in samples. |
 | `radix` | text | `"UNSIGNED"` | How Vivado is asked to write every multi-bit probe: `UNSIGNED`, `SIGNED` or `HEX` (any letter case; sent to Vivado in capitals). Anything else is refused. Not used by captures from the GUI. |
 | `probe_format` | object | `{}` | How single probes are written into the CSV where that differs from `radix`: `{"adc_data": "signed", "top/u1/status": "hex"}`. The key is a net name with or without its hierarchy; the value is `unsigned`, `signed` or `hex`. |
 | `capture_mode` | text | `"ALWAYS"` | `ALWAYS`, or `BASIC` for a core that was built with capture control. Anything else is refused. |
 | `out` | path | `captures` in the current directory | The folder that the session folders are written into. Each run makes one session folder, `<out>\<date>_<time>_<target>\`, which holds the captures, `index.csv` and `session.log`. |
+
+`position` and `timeout_min` are JSON numbers. Text is refused, also text that holds a number (`"2"`): write
+`2`. A key that is left out, or `null`, takes its default.
 
 **Trigger.** The probe is named by its full hierarchical name, by its leaf name, or by the end of the full name
 from a `/` on (`b/valid` for `a/b/valid`). The name must fit exactly one probe of the selected ILA core. The
@@ -235,6 +241,10 @@ What a job from the GUI still uses of the selected profile: `tools.vivado`, `too
 script field is empty, `hardware.target_filter`, `capture.capture_mode`, `capture.out` and the `stats`
 section. `capture.radix` and the `hook` section are not used.
 
+The profile is read from its file for every job. If the file is no longer there - renamed or deleted after
+the page read its list - the job ends with `profile not found: <path>`: it is not run with the built-in
+defaults in place of the profile.
+
 ## Relative paths
 
 "Program folder" is the folder that holds `ila_bridge.py` and `ila_capture.py`: the root of the repository in a
@@ -245,7 +255,7 @@ development build, `distribute\` in a portable folder.
 | `--profile` | (the GUI passes the full path) | against the current directory |
 | `hardware.ltx` | against the program folder | `--ltx` is taken against the current directory. A relative path in a profile is unsafe: `check` looks in the current directory, Vivado in the program folder. Write a full path. |
 | `capture.out` | against the program folder; when it is not set, `captures\` in the program folder | against the current directory; when it is not set, `captures\` in the current directory |
-| `tools.tcl_script`, `--tcl` | as written, else in the program folder | `--tcl`: as written, else in the program folder |
+| `tools.tcl_script`, `--tcl` | as written, else in the program folder, else in its `scripts` folder | `--tcl`: as written, else in the program folder, else in its `scripts` folder |
 | `tools.vivado`, `xsct`, `nm`, `objdump` | as written (Vivado is searched for if it is not there) | the same |
 
 `check` reports a relative `hardware.ltx` as a problem, for the reason in the table. A relative `capture.out`
@@ -262,8 +272,9 @@ python ila_capture.py --profile profiles\example-hook-uart.json check --hook
 
 `--profile` may stand before or after the command. `check` needs no hardware. It looks for Vivado the way a
 capture does, for the probe file, for a hw_server address that can be used, for a trigger that can be written,
-for a known `radix` and `capture_mode`, and for a hook section that fits together (required keys, a template
-that only uses known fields). `--hook` also requires the hook keys and looks for `xsct`, `nm` and `objdump`.
+for a known `radix`, `capture_mode` and `format`, for a `position` and a `timeout_min` that a capture can use,
+and for a hook section that fits together (required keys, a template that only uses known fields).
+`--hook` also requires the hook keys and looks for `xsct`, `nm` and `objdump`.
 `--elf <file>` reads the hook symbols from an ELF file and compares the size of the variable with
 `hook.fields`. `check` prints `note:` and `PROBLEM:` lines and ends with `OK` (exit code 0) or the number of
 problems (exit code 1).

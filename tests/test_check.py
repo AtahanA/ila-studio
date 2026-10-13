@@ -63,12 +63,23 @@ def test_profile_without_a_probe_file_fails(prof, capsys):
     ({"trigger": "a}b eq1'b1"}, "its braces do not pair up"),
     ({"radix": "OCTAL"}, "capture.radix is 'OCTAL': it must be one of UNSIGNED, SIGNED, HEX"),
     ({"capture_mode": "x"}, "capture.capture_mode is 'x': it must be one of ALWAYS, BASIC"),
+    ({"format": "tar"}, "capture.format is 'tar': it must be one of both, ila, csv"),
+    ({"position": "12; puts hi"}, "capture.position is '12; puts hi': it must be a whole number of 0 or more"),
+    ({"timeout_min": "2"}, "capture.timeout_min is '2': it must be a number of minutes above 0"),
+    ({"timeout_min": 0}, "capture.timeout_min is 0: it must be a number of minutes above 0"),
 ])
 def test_capture_settings_that_cannot_work_are_problems(prof, capsys, capture, said):
     prof["capture"].update(capture)
     code, out = check(prof, capsys)
     assert code == 1
     assert said in [line for line in out.splitlines() if "PROBLEM: " in line][0]
+
+
+def test_format_in_capitals_is_none(prof, capsys):
+    # a run takes it in any letter case, so there is nothing to report
+    prof["capture"]["format"] = "CSV"
+    code, out = check(prof, capsys)
+    assert code == 0 and "PROBLEM" not in out
 
 
 def test_relative_capture_folder_is_noted_with_where_it_is(prof, capsys, tmp_path, monkeypatch):
