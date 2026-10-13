@@ -586,7 +586,9 @@ export function App() {
         setAnalysisKnown(true);
       })
       .catch(() => !disposed && setAnalysisKnown(true));
-    void loadProfiles();
+    // (what follows the reading of the folder is not done for a page that is gone: in development React
+    // StrictMode runs this effect twice, and the profile and its probe file would be applied and read twice)
+    void loadProfiles(() => disposed);
 
     // A job started before the page was (re)loaded runs on in the backend: show it as running, with Stop,
     // until it is gone. Without this a reloaded page could neither see nor end it.
@@ -797,12 +799,15 @@ export function App() {
   }, [coreDepth]);
 
   // ---- profiles and the probe file --------------------------------------------------------------------------
-  const loadProfiles = async () => {
+  /** `gone`: asked once the folder has been read - true when the page that asked is no longer there */
+  const loadProfiles = async (gone: () => boolean) => {
     let list: ProfileInfo[] = [];
     try {
       list = await readProfiles();
+      if (gone()) return;
       setProfiles(list);
     } catch (e) {
+      if (gone()) return;
       setStatusMessage(`Could not read the profiles: ${e}`);
       setLastRunFailed(true);
       setErrorDetails(String(e));
@@ -1436,7 +1441,9 @@ export function App() {
               <WaveformViewer
                 waveform={waveform}
                 selectedSignals={selectedWaveformSignals}
-                triggerPosition={waveform?.triggerSample ?? captureConfig.position}
+                // the trigger of the capture on screen, where its file marks one - never the position set above,
+                // which is that of the next capture
+                triggerPosition={waveform?.triggerSample ?? null}
                 samplePeriodNs={captureConfig.samplePeriodNs}
                 onOpenAnalysis={() => setActiveTab("analysis")}
               />

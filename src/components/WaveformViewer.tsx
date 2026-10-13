@@ -4,7 +4,7 @@
 import React, { useRef, useEffect, useState, useMemo } from "react";
 import { SignalData, WaveformResult } from "../types";
 import { Extremes, envelopeOf, extremes, formatSI, toSigned } from "../analysis";
-import { drawCurve } from "../plotDraw";
+import { deviceFrame, drawCurve, fitCanvas, useDevicePixelRatio } from "../plotDraw";
 import { plotPalette, useTheme } from "../theme";
 import { probeKey, shownSignals } from "../trigger";
 import {
@@ -35,8 +35,8 @@ interface WaveformViewerProps {
   waveform: WaveformResult | null;
   /** the signals ticked in the probe list, by probeKey (none ticked: all are shown) */
   selectedSignals: string[];
-  /** buffer index of the trigger sample of the capture on screen */
-  triggerPosition: number;
+  /** buffer index of the sample the file of the capture on screen marks as the trigger; null when it marks none */
+  triggerPosition: number | null;
   samplePeriodNs: number;
   /** show this capture in the Signal Analysis tab */
   onOpenAnalysis: () => void;
@@ -65,6 +65,9 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
   // the buses drawn as an analog wave, by probeKey like the ticks: of two buses of one leaf name, the one clicked
   const [analogModeMap, setAnalogModeMap] = useState<Record<string, boolean>>({});
   const [containerWidth, setContainerWidth] = useState(0);
+  // the canvas is drawn for the pixels of the screen, as the plots of the analysis are: on a display scaled to
+  // 125 % or 150 % a canvas of as many pixels as CSS pixels is stretched, and traces and labels come out soft
+  const dpr = useDevicePixelRatio();
   const drag = useRef<{ startX: number; startOffset: number } | null>(null);
 
   const displayedSignals = useMemo(() => (waveform ? shownSignals(waveform.signals, selectedSignals) : []), [waveform, selectedSignals]);
@@ -99,7 +102,8 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
     setPanOffset((p) => Math.max(0, Math.min(p, Math.max(0, totalSamples - MIN_VISIBLE_SAMPLES))));
   }, [totalSamples, maxZoom]);
 
-  // Track the width of the drawing area. The canvas is sized inside the drawing effect below, because setting
+  // Track the width of the drawing area, in CSS pixels: the pointer handlers and the hover line count in them
+  // whatever the scaling of the display. The canvas is sized inside the drawing effect below, because setting
   // canvas.width erases it: sizing in a separate effect wiped the picture right after it had been drawn.
   useEffect(() => {
     const container = containerRef.current;
@@ -144,14 +148,12 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !waveform || containerWidth <= 0) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
+    // everything below is laid out in CSS pixels; the canvas has the pixels of the screen (its CSS size is set
+    // on the element, the bitmap no longer says it)
     const width = containerWidth;
     const height = canvasHeight;
-    canvas.width = width;
-    canvas.height = height;
-    ctx.clearRect(0, 0, width, height);
+    const ctx = fitCanvas(canvas, width, height, dpr);
+    if (!ctx) return;
     if (totalSamples === 0 || displayedSignals.length === 0) return;
 
     const sampleToX = (sIdx: number) => ((sIdx - startSample) / samplesVisible) * width;
@@ -215,6 +217,9 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
         const yLow = yBase + ROW_HEIGHT - 10;
         const yHigh = yBase + 8;
         ctx.fillStyle = sig.isBus ? palette.waveAnalog : palette.waveBit;
+        // the curve in the canvas' own pixels, so that every bar is exactly one column of the screen wide
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
         drawCurve(
           ctx,
           vals,
@@ -222,19 +227,23 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
           !sig.isBus, // logic: hold the level, then step; wave: join the samples
           // a wave has its sample in the middle of the sample's cell (where the hover line reads it); a logic
           // level fills the cell from its left edge
-          {
-            left: 0,
-            top: yHigh,
-            width,
-            height: yLow - yHigh,
-            lo: startSample - (sig.isBus ? 0.5 : 0),
-            hi: startSample + samplesVisible - (sig.isBus ? 0.5 : 0),
-            v0: minV,
-            v1: maxV,
-          },
-          1.6,
-          1,
+          deviceFrame(
+            {
+              left: 0,
+              top: yHigh,
+              width,
+              height: yLow - yHigh,
+              lo: startSample - (sig.isBus ? 0.5 : 0),
+              hi: startSample + samplesVisible - (sig.isBus ? 0.5 : 0),
+              v0: minV,
+              v1: maxV,
+            },
+            dpr,
+          ),
+          1.6 * dpr,
+          Math.max(1, Math.round(dpr)),
         );
+        ctx.restore();
       } else {
         // Multi-bit Bus in Hex Box Mode
         const yTop = yBase + 10;
@@ -274,7 +283,10 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
             const px = Math.floor(x0);
             if (px !== lastDensePx) {
               ctx.fillStyle = palette.waveBusDense;
-              ctx.fillRect(px, yTop, 1, yBot - yTop);
+              // from one pixel of the screen to another: on a scaled display a bar of one CSS pixel ends inside a
+              // pixel, and bars that touch would leave a paler seam between them
+              const from = Math.round(px * dpr) / dpr;
+              ctx.fillRect(from, yTop, Math.round((px + 1) * dpr) / dpr - from, yBot - yTop);
               lastDensePx = px;
             }
           }
@@ -285,8 +297,9 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
       }
     });
 
-    // Trigger line marker
-    const trigIdx = waveform.sampleIndices.findIndex((idx) => idx >= triggerPosition);
+    // Trigger line marker: only for a capture whose file marks its trigger sample. The position set on the page
+    // is that of the next capture and says nothing about one that is on disk.
+    const trigIdx = triggerPosition === null ? -1 : waveform.sampleIndices.findIndex((idx) => idx >= triggerPosition);
     if (trigIdx >= startSample && trigIdx <= endSample) {
       const tx = sampleToX(trigIdx);
       ctx.save();
@@ -302,7 +315,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
       ctx.fillText("TRIG", tx + 4, RULER_HEIGHT + 14);
       ctx.restore();
     }
-  }, [waveform, displayedSignals, containerWidth, canvasHeight, startSample, endSample, samplesVisible, totalSamples, analogModeMap, triggerPosition, samplePeriodNs, palette]);
+  }, [waveform, displayedSignals, containerWidth, canvasHeight, startSample, endSample, samplesVisible, totalSamples, analogModeMap, triggerPosition, samplePeriodNs, palette, dpr]);
 
   // Mouse Interactions
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -434,7 +447,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
         >
           {waveform ? (
             <>
-              <canvas ref={canvasRef} className="waveform-canvas" />
+              <canvas ref={canvasRef} className="waveform-canvas" style={{ width: containerWidth, height: canvasHeight }} />
               {hoverLeft !== null && <div className="waveform-hover-cursor" style={{ left: hoverLeft }} />}
             </>
           ) : (
@@ -454,9 +467,11 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
             <strong>Buffer Depth:</strong> {waveform.totalSamples.toLocaleString()} samples
             {waveform.step > 1 ? ` (every ${waveform.step}th shown)` : ""}
           </span>
-          <span className="footer-item">
-            <strong>Trigger at:</strong> sample {triggerPosition}
-          </span>
+          {triggerPosition !== null && (
+            <span className="footer-item">
+              <strong>Trigger at:</strong> sample {triggerPosition}
+            </span>
+          )}
           {hoverIndex !== null && (
             <span className="footer-item highlight">
               <strong>Sample Index:</strong> {waveform.sampleIndices[hoverIndex] ?? hoverIndex}

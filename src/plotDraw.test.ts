@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { envelopeOf } from "./analysis";
-import { type CurveFrame, drawCurve } from "./plotDraw";
+import { type CurveFrame, deviceFrame, drawCurve, fitCanvas } from "./plotDraw";
 
 interface Rect {
   x: number;
@@ -39,6 +39,119 @@ function drawn(y: ArrayLike<number>, f: CurveFrame, { step = false, thickness = 
   drawCurve(ctx, y, envelope ? envelopeOf(y) : null, step, f, thickness, column);
   return rects;
 }
+
+/** A canvas that only notes what fitCanvas does with one: how often its bitmap is sized, and what its context is told. */
+function canvasOf(width: number, height: number, withContext = true) {
+  const told: string[] = [];
+  const size = { width, height, set: 0 };
+  const ctx = {
+    setTransform: (...m: number[]) => void told.push(`transform ${m.join(" ")}`),
+    clearRect: (...r: number[]) => void told.push(`clear ${r.join(" ")}`),
+  };
+  const canvas = {
+    get width() {
+      return size.width;
+    },
+    set width(w: number) {
+      size.width = w;
+      size.set++;
+    },
+    get height() {
+      return size.height;
+    },
+    set height(h: number) {
+      size.height = h;
+      size.set++;
+    },
+    getContext: () => (withContext ? ctx : null),
+  };
+  return { canvas: canvas as unknown as HTMLCanvasElement, ctx: ctx as unknown as CanvasRenderingContext2D, size, told };
+}
+
+describe("fitCanvas", () => {
+  it("gives the canvas the pixels of a scaled display and a context that draws in CSS pixels", () => {
+    // a new canvas is 300 x 150; the viewer of a window 1280 px wide is 984 x 376 CSS pixels
+    const { canvas, ctx, size, told } = canvasOf(300, 150);
+    expect(fitCanvas(canvas, 984, 376, 1.25)).toBe(ctx);
+    expect([size.width, size.height]).toEqual([1230, 470]);
+    expect(told).toEqual(["transform 1.25 0 0 1.25 0 0", "clear 0 0 984 376"]);
+  });
+
+  it("is as many pixels as CSS pixels where the display is not scaled", () => {
+    const { canvas, size, told } = canvasOf(300, 150);
+    fitCanvas(canvas, 984, 376, 1);
+    expect([size.width, size.height]).toEqual([984, 376]);
+    expect(told).toEqual(["transform 1 0 0 1 0 0", "clear 0 0 984 376"]);
+  });
+
+  it("rounds to whole pixels", () => {
+    const { canvas, size } = canvasOf(300, 150);
+    fitCanvas(canvas, 333, 101, 1.5);
+    expect([size.width, size.height]).toEqual([500, 152]);
+    fitCanvas(canvas, 333, 101, 1.25);
+    expect([size.width, size.height]).toEqual([416, 126]);
+  });
+
+  it("does not size a bitmap anew that has the size already: that would erase and reallocate it", () => {
+    const { canvas, size, told } = canvasOf(300, 150);
+    fitCanvas(canvas, 984, 376, 1.5);
+    expect(size.set).toBe(2);
+    fitCanvas(canvas, 984, 376, 1.5);
+    expect(size.set).toBe(2);
+    // ... but it is cleared for the next picture, and the scale is set again
+    expect(told).toEqual(["transform 1.5 0 0 1.5 0 0", "clear 0 0 984 376", "transform 1.5 0 0 1.5 0 0", "clear 0 0 984 376"]);
+    // the window moves to a screen with another scaling
+    fitCanvas(canvas, 984, 376, 1);
+    expect(size.set).toBe(4);
+    expect([size.width, size.height]).toEqual([984, 376]);
+  });
+
+  it("answers null where the canvas has no context", () => {
+    const { canvas, size } = canvasOf(300, 150, false);
+    expect(fitCanvas(canvas, 984, 376, 2)).toBeNull();
+    expect([size.width, size.height]).toEqual([1968, 752]);
+  });
+});
+
+describe("deviceFrame", () => {
+  // a row of the viewer: 26 px high, 32 px below the top of a canvas 984 CSS pixels wide
+  const row: CurveFrame = { left: 0, top: 32, width: 984, height: 26, lo: -0.5, hi: 2047.5, v0: 0, v1: 4095 };
+
+  it("is the frame itself where the display is not scaled", () => {
+    expect(deviceFrame(row, 1)).toEqual(row);
+  });
+
+  it("gives place and size in whole pixels of the canvas, and leaves the data and the value axis alone", () => {
+    expect(deviceFrame(row, 1.25)).toEqual({ ...row, top: 40, width: 1230, height: 33 });
+    expect(deviceFrame(row, 1.5)).toEqual({ ...row, top: 48, width: 1476, height: 39 });
+    expect(deviceFrame(row, 2)).toEqual({ ...row, top: 64, width: 1968, height: 52 });
+    // the frame of a plot of the analysis, which does not begin at the edge of its canvas
+    expect(deviceFrame({ ...row, left: 66, top: 8, width: 901, height: 271 }, 1.25)).toEqual({ ...row, left: 83, top: 10, width: 1126, height: 339 });
+  });
+
+  it("covers a canvas sized by fitCanvas from edge to edge", () => {
+    for (const dpr of [1, 1.25, 1.5, 1.75, 2, 3]) {
+      const { canvas, size } = canvasOf(300, 150);
+      fitCanvas(canvas, 983, 376, dpr);
+      expect(deviceFrame({ ...row, width: 983 }, dpr).width).toBe(size.width);
+    }
+  });
+
+  it("lets drawCurve draw one bar per column of the screen", () => {
+    // 4 CSS pixels at 150 % are 6 columns: a level is one rectangle over all of them, a ramp one bar for each
+    const view = deviceFrame(frame({}), 1.5);
+    expect(drawn([5, 5, 5, 5], view, { thickness: 3 })).toEqual([{ x: 0, y: 73.5, w: 6, h: 3 }]);
+    const ramp = drawn([0, 10], deviceFrame(frame({ hi: 1 }), 1.5), { thickness: 3 });
+    expect(ramp.map((r) => [r.x, r.w])).toEqual([
+      [0, 1],
+      [1, 1],
+      [2, 1],
+      [3, 1],
+      [4, 1],
+      [5, 1],
+    ]);
+  });
+});
 
 describe("drawCurve", () => {
   it("draws nothing without samples, without a range or without room", () => {

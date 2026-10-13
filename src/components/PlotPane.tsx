@@ -4,7 +4,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Extremes, envelopeOf, extremes, formatOnAxis, niceTicks, tickLabels } from "../analysis";
 import { HoverStore } from "../hoverStore";
-import { drawCurve } from "../plotDraw";
+import { deviceFrame, drawCurve, fitCanvas, useDevicePixelRatio } from "../plotDraw";
 import { plotPalette, useTheme } from "../theme";
 
 export interface PlotCurve {
@@ -113,21 +113,6 @@ function usableRange(a: number, b: number): boolean {
   return Number.isFinite(a) && Number.isFinite(b) && b - a > Math.max(Math.abs(a), Math.abs(b)) * Number.EPSILON * 64;
 }
 
-function fitCanvas(canvas: HTMLCanvasElement, width: number, height: number, dpr: number): CanvasRenderingContext2D | null {
-  const w = Math.round(width * dpr);
-  const h = Math.round(height * dpr);
-  // assigning the size reallocates and clears the canvas: only when it really changed
-  if (canvas.width !== w || canvas.height !== h) {
-    canvas.width = w;
-    canvas.height = h;
-  }
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-  return ctx;
-}
-
 /**
  * One chart: several curves over a sample axis. Two canvases: the picture itself, redrawn only when the data or
  * the view changes, and a transparent overlay for everything that moves on its own (crosshair, cursors, the
@@ -170,7 +155,8 @@ export const PlotPane: React.FC<PlotPaneProps> = ({
   const baseRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const [width, setWidth] = useState(0);
-  const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1);
+  // the window may be moved to a screen with another scaling: the canvases are then drawn for its pixels
+  const dpr = useDevicePixelRatio();
   // what the last drawing showed: the pointer handlers and the overlay convert pixels with it
   // (ticks: where the labels of the x axis stand, left and right edge of each)
   const shown = useRef({ y0: 0, y1: 1, lo: 0, hi: 1, pw: 1, ph: 1, width: 0, ticks: [] as [number, number][] });
@@ -204,14 +190,6 @@ export const PlotPane: React.FC<PlotPaneProps> = ({
     observer.observe(host);
     return () => observer.disconnect();
   }, []);
-
-  // the window was moved to a screen with another scaling: draw for its pixels
-  useEffect(() => {
-    const query = window.matchMedia(`(resolution: ${dpr}dppx)`);
-    const update = () => setDpr(window.devicePixelRatio || 1);
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, [dpr]);
 
   // ---- what moves on its own: cursors, the crosshair, the stretch being marked --------------------------------
   const drawOverlay = useCallback(() => {
@@ -535,16 +513,7 @@ export const PlotPane: React.FC<PlotPaneProps> = ({
     // the curves, in the canvas' own pixels so that every bar is exactly one column wide
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    const frame = {
-      left: Math.round(px * dpr),
-      top: Math.round(py * dpr),
-      width: Math.round(pw * dpr),
-      height: Math.round(ph * dpr),
-      lo,
-      hi,
-      v0: y0,
-      v1: y1,
-    };
+    const frame = deviceFrame({ left: px, top: py, width: pw, height: ph, lo, hi, v0: y0, v1: y1 }, dpr);
     ctx.beginPath();
     ctx.rect(frame.left, frame.top, frame.width, frame.height);
     ctx.clip();

@@ -1,7 +1,44 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Atahan Aggunlu
 
+import { useEffect, useState } from "react";
 import { type Envelope, type Extremes, extremes } from "./analysis";
+
+/**
+ * The device pixel ratio of the screen the window is on: how many pixels of the screen one CSS pixel covers (1.25
+ * on a display scaled to 125 %). It follows the window to a screen with another scaling.
+ */
+export function useDevicePixelRatio(): number {
+  const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1);
+  useEffect(() => {
+    const query = window.matchMedia(`(resolution: ${dpr}dppx)`);
+    const update = () => setDpr(window.devicePixelRatio || 1);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, [dpr]);
+  return dpr;
+}
+
+/**
+ * Gives a canvas of `width` x `height` CSS pixels the pixels of the screen and clears it. A canvas with as many
+ * pixels as CSS pixels is stretched on a scaled display, and what is drawn comes out soft. The context is scaled
+ * to match, so drawing goes on in CSS pixels. The CSS size of the element has to be set by its owner: the bitmap
+ * no longer says it.
+ */
+export function fitCanvas(canvas: HTMLCanvasElement, width: number, height: number, dpr: number): CanvasRenderingContext2D | null {
+  const w = Math.round(width * dpr);
+  const h = Math.round(height * dpr);
+  // assigning the size reallocates and clears the canvas: only when it really changed
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  return ctx;
+}
 
 /** Where a curve is drawn, in the canvas' own pixels, and which part of the data and of the value axis it shows. */
 export interface CurveFrame {
@@ -15,6 +52,20 @@ export interface CurveFrame {
   /** the values at the bottom and the top edge */
   v0: number;
   v1: number;
+}
+
+/**
+ * A frame laid out in CSS pixels, in the pixels of a canvas sized by fitCanvas: whole ones, so that drawCurve
+ * draws exactly one bar per column of the screen. The data and the value axis it shows stay as they are.
+ */
+export function deviceFrame(frame: CurveFrame, dpr: number): CurveFrame {
+  return {
+    ...frame,
+    left: Math.round(frame.left * dpr),
+    top: Math.round(frame.top * dpr),
+    width: Math.round(frame.width * dpr),
+    height: Math.round(frame.height * dpr),
+  };
 }
 
 /**

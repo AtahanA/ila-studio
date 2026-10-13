@@ -247,12 +247,12 @@ The card "Interactive Logic Analyzer Waveform" at the bottom of the capture tab.
 - Buses as boxes with their hex value, or - with the small button next to the value - as an analog wave (e.g.
   for ADC or DSP data).
 - A ruler in samples, or in time when the sample period is known.
-- The trigger as a red dashed line marked "TRIG", and the values of all signals at the sample under the
-  pointer.
+- The trigger as a red dashed line marked "TRIG", when the file marks one in its `TRIGGER` column, and the
+  values of all signals at the sample under the pointer.
 - Zoom in, zoom out and reset buttons. Ctrl + wheel zooms around the pointer; dragging pans; the plain wheel
   scrolls the signal rows.
 - **Signal Analysis** in its header opens the same capture in the analysis tab.
-- The footer names the buffer depth, the trigger sample and the file of the capture.
+- The footer names the buffer depth, the trigger sample when the file marks one, and the file of the capture.
 
 ## Signal Analysis
 

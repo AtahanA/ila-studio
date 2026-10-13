@@ -1643,11 +1643,14 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
   const [tablesHost, setTablesHost] = useState<HTMLDivElement | null>(null);
   // The card keeps the greatest height it has had: a page that gets shorter while it is scrolled to its end is
   // shifted by the browser - under the pointer, in the middle of the click that selected a plot with fewer rows.
+  // The height is taken as the box has it, fractions of a pixel included (a row of the tables is 16.5 px high):
+  // offsetHeight rounds, and a minimum half a pixel above the real height makes the card grow inside its own
+  // observer callback - which the browser reports to the window as an error ("ResizeObserver loop ...").
   useEffect(() => {
     if (!tablesHost) return;
     let tallest = 0;
     const observer = new ResizeObserver(() => {
-      const height = tablesHost.offsetHeight;
+      const height = tablesHost.getBoundingClientRect().height;
       if (height > tallest) {
         tallest = height;
         tablesHost.style.minHeight = `${height}px`;
@@ -1667,6 +1670,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     handoverRead.current = true;
     handover.current = loadHandover();
   }
+  // the number of samples of the capture that view was applied to (see the effect that takes it over)
+  const tookOverAt = useRef<number | null>(null);
   const count = waveform ? waveform.sampleIndices.length : 0;
   const limit = useMemo<[number, number]>(() => [0, Math.max(1, count - 1)], [count]);
   const firstSample = waveform?.sampleIndices[0] ?? 0;
@@ -1775,6 +1780,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
   // a capture of another length: the old zooms and cursors point at nothing sensible
   useEffect(() => {
+    // Run again for the very capture whose view was just taken over, there is nothing to reset: in development
+    // React StrictMode runs every effect of a mount twice, and the second run would throw away what the first
+    // one took over (the hand-over is used up by then).
+    if (tookOverAt.current === count) return;
+    tookOverAt.current = null;
     setSharedX(null);
     setViews({});
     setCursorA(null);
@@ -1793,6 +1803,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     setViews(Object.fromEntries(panes.flatMap((p, i) => (h.views[i] ? [[p.id, { x: inside(h.views[i].x), y: h.views[i].y ?? null }]] : []))));
     setLevels(Object.fromEntries(panes.flatMap((p, i) => (h.levels[i] ? [[p.id, { a: h.levels[i].a ?? null, b: h.levels[i].b ?? null }]] : []))));
     if (panes[h.active]) setActivePaneId(panes[h.active].id);
+    tookOverAt.current = count;
   }, [count]);
 
   // Start with the liveliest buses - usually what one wants to see - when there is no remembered layout, or
