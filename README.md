@@ -14,7 +14,11 @@ background and needs Python 3; captures are ordinary `.csv` / `.ila` files on di
 - Developed and tested with **Vivado 2017.4**, a **Zynq-7000** device and a **SmartLynq** cable through a remote
   hw_server, on Windows. Other Vivado versions, device families and cables are untested; two differences are
   known and listed under [Known limitations](#known-limitations). Reports are welcome, good or bad.
-- Windows 10 and 11 only for now.
+- Windows only for now, and tried by hand only on Windows 11, with Python 3.12 and 3.13. Windows 10 is meant to
+  work, but nobody has run the application there yet. Python 3.8, the oldest that is accepted, has only the
+  automated tests behind it: they pass on 3.8 and 3.13 (run for every pull request, with a recorder in place
+  of Vivado), but the application has not been started with a 3.8 interpreter. A report from Windows 10 or
+  with Python 3.8 is welcome, good or bad.
 - The interface can be tried without any hardware: see [Quick start](#quick-start-without-hardware).
 
 ## Not an AMD product
@@ -50,11 +54,12 @@ for hardware work.
 To run:
 
 - Windows 10 or 11, with the Microsoft Edge WebView2 Runtime (part of Windows 11; install it from Microsoft on
-  a Windows 10 PC that lacks it).
+  a Windows 10 PC that lacks it). Windows 10 has not been tried yet: see [Status](#status).
 - **Python 3.8 or newer.** Only the standard library is used; there is nothing to `pip install`. The
   application looks for it in this order: the path in the environment variable `ILA_PYTHON`, then `PATH`, then
   `py -3`. A Python of MSYS2 (a MinGW build) or of Cygwin is passed over on the way and only taken when there
   is no other, unless `ILA_PYTHON` names it. Each start writes the interpreter in use into `ila_log.txt`.
+  Python 3.8 has run the automated tests only: see [Status](#status).
 - For hardware work: **Vivado or Vivado Lab Edition**, and a running hw_server that the JTAG cable is attached
   to. Vivado is looked for in this order: `tools.vivado` of the selected profile (without one:
   `C:\Xilinx\Vivado\2017.4\bin\vivado.bat`); `vivado` / `vivado_lab` on `PATH`; the folder in `XILINX_VIVADO`,

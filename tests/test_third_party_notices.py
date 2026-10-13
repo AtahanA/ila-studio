@@ -4,9 +4,11 @@
 """tools/third_party_notices.py, as far as it works without cargo and npm: the licence gate of a release (which
 licence expressions may go into a GPL-3.0-or-later program), which crates count as linked, and how
 THIRD-PARTY-NOTICES.md is laid out. The packages are made up here."""
+import hashlib
 import importlib.util
 import itertools
 import os
+import re
 
 import pytest
 
@@ -188,6 +190,14 @@ def test_the_standard_texts_are_the_licences_they_stand_for():
     apache = " ".join(tpn.STANDARD_TEXTS["Apache-2.0"].split())
     assert apache.startswith("Apache License Version 2.0, January 2004 http://www.apache.org/licenses/")
     assert "9. Accepting Warranty or Additional Liability." in apache and "END OF TERMS AND CONDITIONS" in apache
+    mpl = tpn.STANDARD_TEXTS["MPL-2.0"]
+    assert mpl.startswith("Mozilla Public License Version 2.0\n==================================\n\n1. Definitions\n")
+    assert "\n10. Versions of the License\n" in mpl and "\nExhibit A - Source Code Form License Notice\n" in mpl
+    assert mpl.endswith("Public License, v. 2.0.")
+    # a long text that was copied, not typed: the LICENSE file of the crate dtoa-short 0.3.5 without its last
+    # line break. A slip of the hand in it shows here.
+    assert hashlib.sha256(mpl.encode("ascii")).hexdigest() \
+        == "4b89d4518bd135ab4ee154a7bce722246b57a98c3d7efc1a09409898160c2bd1"
     assert set(tpn.STANDARD_TEXTS) <= set(tpn.ALLOWED)
 
 
@@ -218,6 +228,82 @@ def test_a_list_of_fields_is_kept_but_is_not_the_licence_in_words():
     c = component(files=[("LICENSE.spdx", "PackageLicenseDeclared: MIT")])
     assert [name for name, _ in c.files] == ["LICENSE.spdx", "standard text of MIT"]
     assert c.note.startswith("No licence file in the package.")
+
+
+def test_the_mpl_text_stands_in_and_is_printed_once_with_the_packages_that_bring_it():
+    brought = component("gamma", "MPL-2.0", [("LICENSE", tpn.STANDARD_TEXTS["MPL-2.0"].replace("\n    ", "\n  "))],
+                        repository="https://example.org/gamma")
+    bare = component("delta", "MPL-2.0", repository="https://example.org/delta")
+    assert bare.files == [("standard text of MPL-2.0", tpn.STANDARD_TEXTS["MPL-2.0"])]
+    assert bare.note == ("No licence file in the package. The standard text of MPL-2.0 is printed in its place; "
+                         "for the copyright notice see <https://example.org/delta>.")
+    text = tpn.render("0.4.0", [brought, bare])
+    assert "### Text 1\n\nOf 2 components: delta 1.0.0 (standard text of MPL-2.0), gamma 1.0.0 (`LICENSE`)\n" in text
+    assert text.count("1.1. \"Contributor\"") == 1
+    # ... and the section that says where the source of MPL code is leads to it as well
+    assert "- **delta 1.0.0** (`MPL-2.0`): source code <https://crates.io/crates/delta/1.0.0>, repository " \
+           "<https://example.org/delta>; licence text [1](#text-1)\n" in text
+
+
+# ---------------------------------------------------------------- licence texts added by hand (tools/licences/)
+@pytest.fixture
+def added(monkeypatch, tmp_path):
+    """tools/licences/ and its table, made up: one text, read for beta 1.0.0. Returns the text as it is printed."""
+    (tmp_path / "beta.txt").write_bytes(b"Copyright (c) the authors of beta  \r\n\r\nRedistribution and use.\r\n")
+    monkeypatch.setattr(tpn, "LICENCES", str(tmp_path))
+    monkeypatch.setattr(tpn, "ADDED_TEXTS", {"beta": ("1.0.0", "beta.txt", "the LICENSE file of its repository",
+                                                      "That file is printed in its place.")})
+    return "Copyright (c) the authors of beta\n\nRedistribution and use."
+
+
+def test_a_text_added_by_hand_is_printed_for_the_version_it_was_read_for(added):
+    c = component("beta", "BSD-3-Clause", repository="https://example.org/beta")
+    assert c.files == [("the LICENSE file of its repository", added)]
+    assert c.note == ("No licence file in the package: see <https://example.org/beta>. That file is printed in its "
+                      "place.")
+    assert not c.has_licence_text                  # the package brings none, and the summary goes on saying so
+    text = tpn.render("0.4.0", [c])
+    assert "[repository](https://example.org/beta) | [1](#text-1) |\n" in text
+    assert " That file is printed in its place. The added text: [1](#text-1).\n" in text
+    assert "Of 1 component: beta 1.0.0 (the LICENSE file of its repository)\n\n```text\n" + added + "\n```\n" in text
+    assert component("alpha", "BSD-3-Clause").files == []       # nobody else gets it
+
+
+def test_an_added_text_stands_beside_the_standard_text_of_the_package(added):
+    # what it is there for besides: the library of somebody else that a package holds
+    c = component("beta", "MIT")
+    assert [name for name, _ in c.files] == ["standard text of MIT", "the LICENSE file of its repository"]
+    note = [line for line in tpn.render("0.4.0", [c]).split("\n") if line.startswith("- **beta 1.0.0**")]
+    assert len(note) == 1 and note[0].endswith(" That file is printed in its place. The standard text: "
+                                               "[1](#text-1). The added text: [2](#text-2).")
+
+
+def test_an_added_text_is_not_carried_over_to_another_version(added):
+    with pytest.raises(tpn.Problem) as stopped:
+        tpn.complete(tpn.Component("Rust crate", "beta", "1.1.0", "BSD-3-Clause", "", "", []))
+    assert "tools/licences/beta.txt was read for beta 1.0.0, and the lock file now names version 1.1.0" \
+        in str(stopped.value)
+
+
+def test_an_entry_whose_file_is_gone_stops_the_run(added, tmp_path):
+    os.remove(str(tmp_path / "beta.txt"))
+    with pytest.raises(tpn.Problem) as stopped:
+        component("beta", "BSD-3-Clause")
+    assert "tools/licences/beta.txt is not there" in str(stopped.value)
+
+
+def test_the_texts_of_tools_licences_are_the_copies_that_were_made():
+    # sha256 of each file as it was copied from its source (see ADDED_TEXTS), with line feeds as line ends
+    copies = {"alloc-stdlib.txt": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"}
+    # no entry without its file, and no file that no entry names
+    assert sorted(os.listdir(tpn.LICENCES)) == sorted(copies) == sorted(e[1] for e in tpn.ADDED_TEXTS.values())
+    for name, sha256 in copies.items():
+        with open(os.path.join(tpn.LICENCES, name), "rb") as f:
+            assert hashlib.sha256(f.read().replace(b"\r\n", b"\n")).hexdigest() == sha256, name
+    for version, name, called, sentence in tpn.ADDED_TEXTS.values():
+        assert re.match(r"\d+\.\d+\.\d+", version) and tpn.kept_text(name)
+        # ... or the notices would show it as a file of the package
+        assert not tpn.LICENCE_FILE.match(called)
 
 
 # ---------------------------------------------------------------- the document
@@ -319,6 +405,18 @@ def test_what_cannot_be_listed_is_said_in_a_sentence(monkeypatch, tmp_path, caps
     assert tpn.main(["--output", str(tmp_path / "notices.md")]) == 2
     assert capsys.readouterr().err == 'third_party_notices: node_modules/alpha is not installed: run "npm ci" first\n'
     assert os.listdir(str(tmp_path)) == []
+
+
+def test_a_moved_version_of_an_added_text_stops_the_run_with_exit_code_2(added, monkeypatch, tmp_path, capsys):
+    moved = tpn.Component("Rust crate", "beta", "1.1.0", "BSD-3-Clause", "", "https://example.org/beta", [])
+    monkeypatch.setattr(tpn, "rust_components", lambda folder: ("0.4.0", [moved]))
+    monkeypatch.setattr(tpn, "npm_components", lambda root: [])
+    out = tmp_path / "notices.md"
+    for arguments in (["--check"], ["--output", str(out)]):
+        assert tpn.main(arguments) == 2
+        assert capsys.readouterr().err.startswith("third_party_notices: tools/licences/beta.txt was read for "
+                                                  "beta 1.0.0, and the lock file now names version 1.1.0.")
+    assert not out.exists()
 
 
 def test_a_document_that_names_a_folder_of_this_pc_is_not_written(monkeypatch, tmp_path, capsys):

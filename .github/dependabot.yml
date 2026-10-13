@@ -4,11 +4,34 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    ignore:
+      # "tauri build" stops when an npm package of Tauri and its crate are not on the same major.minor
+      # (@tauri-apps/api with tauri, @tauri-apps/plugin-<name> with tauri-plugin-<name>), and a pull request of
+      # Dependabot raises one side only. So the crates lead (the group "tauri" below) and this side is raised by
+      # hand in their pull request, which tests/test_dependency_pairs.py keeps from passing until it is: see
+      # "Updating dependencies" in CONTRIBUTING.md. A patch release needs no partner and is still proposed.
+      # (A multi-ecosystem group is not used for the pair: its documentation does not say what becomes of the
+      # other packages of an ecosystem that is put into one.)
+      - dependency-name: "@tauri-apps/api"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "@tauri-apps/plugin-*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:
       interval: monthly
+    groups:
+      # one pull request for the crates of Tauri, in which the npm side is raised once (see above)
+      tauri:
+        patterns:
+          - "tauri*"
+      # src-tauri/src/crash_reports.rs sets up the ureq client that sentry sends with: the two must agree on the
+      # major version of ureq, and an update of one without the other does not compile
+      crash-reports:
+        patterns:
+          - "sentry*"
+          - "ureq*"
 
   - package-ecosystem: github-actions
     directory: /

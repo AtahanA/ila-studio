@@ -4,8 +4,15 @@ name: CI
 # or anything from the network beyond the packages.
 # release.yml runs the same commands again before it builds a package: a check that is added here is added there.
 on:
+  # Not every push: a commit on a branch with an open pull request would be checked twice, once as the push and
+  # once as the pull request (the concurrency group below does not join the two, their refs differ), and a
+  # pushed tag starts release.yml, which runs these checks itself.
   push:
+    branches:
+      - main
   pull_request:
+  # for a branch that has no pull request yet: Actions, CI, Run workflow
+  workflow_dispatch:
 
 permissions:
   contents: read

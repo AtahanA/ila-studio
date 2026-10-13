@@ -28,7 +28,9 @@ npm run tauri dev
 ## Checks before a pull request
 
 Run all of them from the root of the repository. None needs Vivado, a board or the network. CI runs the same
-commands on Windows (`.github/workflows/ci.yml`, which also names the Rust version it uses).
+commands on Windows (`.github/workflows/ci.yml`, which also names the Rust version it uses): for every pull
+request and for every push to `main`. A branch without a pull request is not checked by itself; start the
+workflow for it by hand (**Actions**, **CI**, **Run workflow**) or open the pull request.
 
 ```powershell
 npm run typecheck
@@ -100,6 +102,25 @@ and fixtures: `adc_data`, `rx_valid`, `frame_start`, `my-board`.
 ILA Studio is licensed under the GNU General Public License v3.0 or later (`GPL-3.0-or-later`). By sending a
 contribution you agree that it is published under the same licence.
 
+## Updating dependencies
+
+Dependabot proposes updates once a month (`.github/dependabot.yml`). Three things do not move by themselves:
+
+- An npm package of Tauri and its crate must be on the same major and minor version: `@tauri-apps/api` with
+  `tauri`, `@tauri-apps/plugin-dialog` with `tauri-plugin-dialog`. Otherwise `tauri build` refuses to build,
+  and none of the checks runs it: a release would stop after its tag was pushed. `python -m pytest` therefore
+  compares the two lock files (`tests/test_dependency_pairs.py`) and fails when a pair is out of step.
+  Dependabot raises the crates of Tauri in one pull request and does not propose a new minor version of the
+  npm side: raise it yourself in that pull request, for example with `npm install @tauri-apps/api@~2.13.0`
+  for a crate 2.13. A patch release of either side needs no partner.
+- `sentry` and `ureq` come in one pull request: `src-tauri/src/crash_reports.rs` sets up the ureq client that
+  sentry sends with, so the two must use the same major version of ureq.
+- A licence text in `tools/licences/` was read for one version of its component. When an update moves that
+  version, `python tools/third_party_notices.py --check` stops with exit code 2, in CI as well. Look at the
+  new package: if it brings its licence file now, remove the entry from `ADDED_TEXTS` in
+  `tools/third_party_notices.py` and the file; if not, compare the file with the place the entry names and
+  put the new version into the entry.
+
 ## Release checklist
 
 A release is the portable folder, packed as `ila-studio-<version>-windows-x64.zip`, and its SHA-256 sum, both
@@ -131,7 +152,10 @@ What the pipeline does for you. `release.yml` runs every check of CI again on th
   `package-lock.json`, and `CHANGELOG.md` has an entry for it whose heading no longer says "Unreleased".
 - The work tree is the commit and nothing else.
 - `tools/third_party_notices.py` writes `THIRD-PARTY-NOTICES.md`: every Rust crate and npm package inside the
-  program with its version, its licence, where its source is, and the text of its licence files. The same
+  program with its version, its licence, where its source is, and the text of its licence files. For a
+  package that brings none it prints the standard text of the licence (MIT, Apache-2.0, MPL-2.0) or the text
+  that `tools/licences/` keeps for that version of the package. One text is still missing, that of
+  Microsoft's WebView2 loader inside the crate `webview2-com-sys`: the notices only point to it. The same
   tool is the licence gate: a component without a licence, or with one that is not on its list of licences
   that may go into a GPL-3.0-or-later program, stops the release. `python tools/third_party_notices.py --check`
   asks the same question at any time, for instance after a dependency was updated; it needs cargo and

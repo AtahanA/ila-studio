@@ -19,6 +19,34 @@ $dist = if ($OutDir) { $ExecutionContext.SessionState.Path.GetUnresolvedProvider
 $distName = if ($OutDir) { $dist } else { "distribute\" }
 # one name for the executable: as cargo builds it, as it is copied, and as the process that may be running
 $exeName = "ila-studio.exe"
+$exe = Join-Path $root "src-tauri\target\release\$exeName"
+
+# Windows does not let a program that runs be replaced, and two files are written here: the copy in the folder
+# that is refreshed and, by a build, the executable of cargo. A process is in the way when it runs from one of
+# the two. Its name does not say so: the development build ("npm run tauri dev" runs src-tauri\target\debug)
+# and a copy in another folder carry the same name and hold neither file.
+function Assert-NotRunning([switch]$Build) {
+    $copy = Join-Path $dist $exeName
+    foreach ($p in @(Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($exeName)) -ErrorAction SilentlyContinue)) {
+        # Windows tells no path for a process of another user or for one that runs elevated: such a process may
+        # be in the way, and all that can be named is its number.
+        if (-not $p.Path) {
+            throw ("$exeName is running as process $($p.Id), and Windows does not tell from which folder (the " +
+                   "process belongs to another user or runs elevated). It may be in the way of $distName or " +
+                   "of the build - close it first.")
+        }
+        # (-eq compares without regard to case, as Windows does; GetFullPath writes a short 8.3 name out)
+        $path = [IO.Path]::GetFullPath($p.Path)
+        if ($path -eq [IO.Path]::GetFullPath($copy)) {
+            throw "$copy is running (process $($p.Id)) - close it before refreshing $distName"
+        }
+        if ($Build -and $path -eq [IO.Path]::GetFullPath($exe)) {
+            throw "$exe is running (process $($p.Id)) - close it before building: cargo cannot replace it"
+        }
+    }
+}
+# asked before the build, which takes minutes
+Assert-NotRunning -Build:(-not $NoBuild)
 
 if (-not $NoBuild) {
     Push-Location $root
@@ -34,12 +62,9 @@ if (-not $NoBuild) {
     } finally { Pop-Location }
 }
 
-$exe = Join-Path $root "src-tauri\target\release\$exeName"
 if (-not (Test-Path $exe)) { throw "$exe not found - build first" }
-# (with -OutDir the copy goes to another folder: a program that runs from distribute\ is not in its way)
-if (-not $OutDir -and (Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($exeName)) -ErrorAction SilentlyContinue)) {
-    throw "$exeName is running - close it before refreshing distribute\"
-}
+# asked once more after a build: the program may have been started in the meantime
+if (-not $NoBuild) { Assert-NotRunning }
 
 New-Item -ItemType Directory -Force (Join-Path $dist "scripts"), (Join-Path $dist "profiles") | Out-Null
 Copy-Item $exe (Join-Path $dist $exeName) -Force
