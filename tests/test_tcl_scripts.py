@@ -72,13 +72,141 @@ def test_capture_commands_reach_their_procs_with_the_values_meant(tcl):
     assert repl.cmd("ila_compare_value [lindex %s 1]" % ic.tcl_trigger("top/data eq14'h0")) == "eq14'h0000"
 
 
-def test_xsct_script_defines_the_commands_of_the_hook(tcl, tmp_path):
-    # xsct's own "connect" is all the script runs when it is sourced; here it does nothing
-    stub = tmp_path / "xsct_stub.tcl"
-    stub.write_text("proc connect args {}\nproc disconnect args {}\nset argv {}\nsource {%s}\n"
-                    % os.path.join(ic.HERE, "xsct_repl.tcl").replace("\\", "/"))
-    defined = tcl(str(stub)).cmd("info procs").split()
-    assert [name for name in ("core_state", "read_words", "resume", "add_bp") if name not in defined] == []
+# ---------------------------------------------------------------- the commands of the hook
+# xsct's own commands as far as xsct_repl.tcl calls them: one core, halted at 0x00100a00 until it is resumed, and
+# breakpoints that xsct numbers from 3 on. ::CALLS is every command the script ran, in order; ::BPS is the
+# breakpoints that are set.
+STAND_IN_XSCT = """\
+set ::CALLS {}
+set ::STATE {Stopped: (Breakpoint)}
+set ::BPS {}
+set ::NEXT_BP 3
+proc connect args { lappend ::CALLS "connect $args" }
+proc disconnect args { lappend ::CALLS disconnect }
+proc targets args { lappend ::CALLS "targets $args" }
+proc state args { return $::STATE }
+proc rrd args { return {pc 00100a00} }
+proc con args { lappend ::CALLS con; set ::STATE Running }
+proc bpadd args {
+    lappend ::CALLS "bpadd $args"
+    lappend ::BPS $::NEXT_BP
+    incr ::NEXT_BP
+    return [lindex $::BPS end]
+}
+proc bpremove {id} {
+    lappend ::CALLS "bpremove $id"
+    set at [lsearch -exact $::BPS $id]
+    if {$at < 0} { error "Breakpoint $id not found" }
+    set ::BPS [lreplace $::BPS $at $at]
+}
+set argv [list %s]
+source {%s}
+"""
+
+
+def xsct_stand_in(tmp_path, *arguments):
+    """The stand-in above as a file that sources xsct_repl.tcl with these arguments; its path."""
+    stub = tmp_path / "xsct_stand_in.tcl"
+    stub.write_text(STAND_IN_XSCT % (" ".join(ic.tcl_word(a) for a in arguments),
+                                     os.path.join(ic.HERE, "xsct_repl.tcl").replace("\\", "/")))
+    return str(stub)
+
+
+@pytest.fixture
+def xsct(tcl, tmp_path):
+    """xsct(*arguments) starts xsct_repl.tcl with these arguments in tclsh, on the stand-in for xsct's own
+    commands, and returns the Repl."""
+    return lambda *arguments: tcl(xsct_stand_in(tmp_path, *arguments))
+
+
+def test_xsct_script_defines_the_commands_of_the_hook(xsct):
+    repl = xsct("tcp:127.0.0.1:3121")
+    defined = repl.cmd("info procs").split()
+    assert [name for name in ("core_state", "read_words", "resume", "add_bp", "del_bp") if name not in defined] == []
+    # xsct's own "connect" is all the script runs when it is sourced
+    assert repl.cmd("set ::CALLS") == "{connect -url tcp:127.0.0.1:3121}"
+
+
+def test_breakpoint_is_planted_at_the_hook_and_its_id_handed_back(xsct):
+    repl = xsct("tcp:127.0.0.1:3121")
+    assert repl.cmd("add_bp 0x00100f00") == "3"          # the id xsct gave it
+    assert repl.cmd("lindex $::CALLS end") == "bpadd -addr 0x00100f00 -type hw"
+    assert repl.cmd("set ::BPS") == "3"
+
+
+def test_planted_breakpoint_is_removed_and_no_other(xsct):
+    repl = xsct("tcp:127.0.0.1:3121")
+    repl.cmd("bpadd -addr 0x00100000")                   # a breakpoint somebody else set in this xsct: number 3
+    assert repl.cmd("add_bp 0x00100f00") == "4"
+    assert repl.cmd("del_bp") == "4"
+    assert repl.cmd("set ::BPS") == "3"
+    assert repl.cmd("lindex $::CALLS end") == "bpremove 4"
+    assert repl.cmd("del_bp") == ""                      # nothing is left to remove: no error ...
+    assert repl.cmd("lindex $::CALLS end") == "bpremove 4"           # ... and nothing was asked of xsct
+
+
+def test_nothing_is_removed_where_nothing_was_planted(xsct):
+    repl = xsct("tcp:127.0.0.1:3121")
+    assert repl.cmd("del_bp") == ""
+    assert "bpremove" not in repl.cmd("set ::CALLS")
+
+
+def test_breakpoint_goes_before_the_core_is_resumed(xsct):
+    # the three commands the driver ends a hook run with, in its order
+    repl = xsct("tcp:127.0.0.1:3121")
+    repl.cmd("add_bp 0x00100f00")
+    assert repl.cmd("del_bp") == "3"
+    assert repl.cmd("core_state") == "Stopped: (Breakpoint) 0x00100a00"
+    assert repl.cmd("resume") == "Running"
+    removed, resumed = repl.cmd("list [lsearch -exact $::CALLS {bpremove 3}] [lsearch -exact $::CALLS con]").split()
+    assert 0 <= int(removed) < int(resumed)
+    assert repl.cmd("set ::BPS") == ""                   # the core runs, and nothing is left that could halt it
+
+
+def test_breakpoint_that_xsct_does_not_remove_is_reported_and_kept_for_another_try(xsct):
+    repl = xsct("tcp:127.0.0.1:3121")
+    repl.cmd("add_bp 0x00100f00")
+    repl.cmd("set ::BPS {}")                             # xsct no longer knows a breakpoint 3
+    with pytest.raises(RuntimeError, match="'del_bp' failed: Breakpoint 3 not found"):
+        repl.cmd("del_bp")
+    assert repl.cmd("set ::PLANTED") == "3"
+
+
+@pytest.mark.parametrize("core_filter", [
+    'name =~ "*Cortex-A9*#0*"',
+    'name =~ "*Cortex-A9 MPCore #0*" && jtag_cable_name =~ "Digilent JTAG-HS3 210299A00001"',
+    'name =~ "a&b|c>d" || name =~ "%TEMP%^!"',
+    'name =~ "$x [exit] {y" ; puts \\z',
+])
+def test_core_filter_of_a_profile_is_the_filter_the_core_is_selected_with(monkeypatch, tmp_path, core_filter):
+    # the driver itself opens xsct here: tclsh with the stand-in, started with what the driver puts behind the
+    # script on the command line of xsct
+    monkeypatch.setattr(ic, "launch", lambda exe, script, *more: [TCLSH, xsct_stand_in(tmp_path, *more)])
+    prof = ic.load_profile(None)
+    prof["hardware"]["core_filter"] = core_filter
+    session = ic.Session(None, prof, ephemeral=True)
+    session.open_xsct()
+    try:
+        session.xs.cmd("core")
+        assert session.xs.cmd("lindex [lindex $::CALLS end] end") == core_filter
+        # the command line held the address and nothing else: the filter did not pass through cmd
+        assert session.xs.cmd("lindex $::CALLS 0") == "connect -url tcp:127.0.0.1:3121"
+        assert session.xs.cmd("set argv") == "tcp:127.0.0.1:3121"
+    finally:
+        session.xs.close()
+        session.xs.p.wait(timeout=30)
+
+
+def test_core_filter_of_the_script_stays_where_the_driver_sets_none(xsct):
+    repl = xsct("tcp:127.0.0.1:3121")
+    repl.cmd("core")
+    assert repl.cmd("lindex [lindex $::CALLS end] end") == 'name =~ "*Cortex-A9*#0*"'
+
+
+def test_script_started_by_hand_still_takes_a_core_filter_as_its_second_argument(xsct):
+    repl = xsct("tcp:127.0.0.1:3121", 'name =~ "*Cortex-A53*#1*"')
+    repl.cmd("core")
+    assert repl.cmd("lindex $::CALLS end") == 'targets -set -nocase -filter {name =~ "*Cortex-A53*#1*"}'
 
 
 # ---------------------------------------------------------------- the debug hub clock and the JTAG clock
@@ -225,3 +353,217 @@ def test_jtag_clock_that_was_asked_for_gets_no_note_about_an_unknown_hub_clock(o
     repl, info = opened(json_hubs(), tck_hz=6000000)
     assert info["JTAG_FREQ_HZ"] == "6000000" and "JTAG_NOTE" not in info
     assert repl.cmd("set ::SET_TCK") == "6000000"
+
+
+# ---------------------------------------------------------------- the repair of a cable ("bad enum default")
+@pytest.fixture
+def unlisted_clock(tcl, write, tmp_path):
+    """unlisted_clock(answer) is the REPL script on the stand-in for Vivado, with a hw_server whose first connect
+    raises "bad enum default" and registers no target - a cable runs at a frequency Vivado cannot represent -
+    and a repair that only answers `answer`. cured: whether the connect after the repair works. Returns the
+    Repl and the ila_open command of a session whose target filter is *99887766*."""
+    def start(answer, cured=True):
+        stub = tmp_path / "vivado_stand_in.tcl"
+        stub.write_text(STAND_IN_VIVADO % ic.resolve_tcl(None).replace("\\", "/"))
+        repl = tcl(str(stub))
+        repl.cmd("set ::CONNECTS 0; set ::CURED %d" % cured)
+        repl.cmd('proc get_hw_servers args { return [expr {$::CONNECTS ? "localhost:3121" : ""}] }')
+        repl.cmd("proc connect_hw_server args { if {[incr ::CONNECTS] == 1 || !$::CURED} "
+                 "{ error {ERROR: [Common 17-70] Application Exception: bad enum default} } }")
+        repl.cmd('proc get_hw_targets args { return [expr {$::CONNECTS > 1 && $::CURED ? "cable" : ""}] }')
+        repl.cmd("proc after args {}")                   # the script waits for a target to appear: not here
+        repl.cmd("proc jtag_reset_cable_freq args { set ::ASKED $args; return %s }" % ic.tcl_word(answer))
+        prof = ic.load_profile(None)
+        prof["hardware"].update(ltx=write("top.ltx", "<probeData/>"), target_filter="*99887766*")
+        return repl, ic.Session(None, prof, ephemeral=True)._ila_open_cmd()
+    return start
+
+
+BY_HAND = "Reset it by hand in xsdb/xsct: connect -url tcp:127.0.0.1:3121; jtag targets %d; jtag frequency 10000000"
+
+
+def test_repair_of_a_cable_is_given_the_target_filter_of_the_session(unlisted_clock):
+    repl, ila_open = unlisted_clock("TCK_RESET 6034482 -> 10000000")
+    repl.cmd(ila_open)
+    assert repl.cmd("set ::ASKED") == "127.0.0.1:3121 *99887766*"
+    assert repl.cmd("set ::CONNECTS") == "2"             # and the connect was tried again after it
+
+
+def test_cable_that_could_not_be_reset_is_said_with_the_way_to_do_it_by_hand(unlisted_clock):
+    repl, ila_open = unlisted_clock("TCK_STUCK 6034482")
+    with pytest.raises(RuntimeError) as failed:
+        repl.cmd(ila_open)
+    assert str(failed.value).endswith("and it could not be reset: TCK_STUCK 6034482. " + BY_HAND % 1)
+
+
+def test_cable_that_was_left_alone_for_the_filter_is_the_one_to_reset_by_hand(unlisted_clock):
+    # the cable of the session runs at a listed frequency: the one in Vivado's way is the other, which the
+    # repair did not touch. Its number is the one the message gives.
+    answer = "TCK_OK 15000000 | " + NOT_TOUCHED % "4 (SmartLynq)"
+    repl, ila_open = unlisted_clock(answer)
+    with pytest.raises(RuntimeError) as failed:
+        repl.cmd(ila_open)
+    assert str(failed.value).endswith("and it could not be reset: %s. " % answer + BY_HAND % 4)
+
+
+def test_cable_that_was_left_alone_is_named_when_vivado_lists_no_target_after_the_repair(unlisted_clock):
+    answer = "TCK_RESET 6034482 -> 10000000 | " + NOT_TOUCHED % "1 (Digilent JTAG-HS3 210299A00001)"
+    repl, ila_open = unlisted_clock(answer, cured=False)
+    with pytest.raises(RuntimeError) as failed:
+        repl.cmd(ila_open)
+    assert "offers no JTAG target matching '*99887766*'" in str(failed.value)
+    assert str(failed.value).endswith("bad enum default - after the repair: %s)" % answer)
+
+
+def test_repair_that_left_no_cable_alone_adds_nothing_to_what_vivado_said(unlisted_clock):
+    repl, ila_open = unlisted_clock("TCK_RESET 6034482 -> 10000000", cured=False)
+    with pytest.raises(RuntimeError) as failed:
+        repl.cmd(ila_open)
+    assert str(failed.value).endswith("(Vivado said: ERROR: [Common 17-70] Application Exception: bad enum default)")
+
+
+# xsdb's own commands as far as the script of the repair calls them. Each is printed as it is run, so that what
+# jtag_reset_cable_freq returns shows what was done to which cable. %s: what "jtag targets -target-properties"
+# answers, and the TCK frequency of each cable by its node id.
+STAND_IN_XSDB = """\
+set ::NODES {%s}
+array set ::HZ {%s}
+set ::CUR {}
+proc connect args { puts "XSDB connect [join $args]" }
+proc disconnect args {}
+proc jtag {what args} {
+    puts [concat XSDB jtag $what $args]
+    if {$what eq "targets" && $args eq "-target-properties"} { return $::NODES }
+    if {$what eq "targets"} { set ::CUR [lindex $args 0]; return }
+    if {$what eq "frequency" && [llength $args] == 0} { return $::HZ($::CUR) }
+    if {$what eq "frequency" && $args eq "-list"} { return {3000000 6000000 7500000 10000000 15000000 30000000} }
+    if {$what eq "frequency"} { set ::HZ($::CUR) [lindex $args 0]; return }
+    error "the stand-in has no jtag $what $args"
+}
+source [lindex $argv 0]
+"""
+# Two cables as xsdb lists them, each (level 0) followed by the devices on its chain. The second one reports its
+# maker and its serial in properties of their own, and has a name that holds neither.
+HS3 = ("{node_id 1 level 0 name {Digilent JTAG-HS3 210299A00001} is_open 1} {node_id 2 level 1 name arm_dap} "
+       "{node_id 3 level 1 name xc7z020}")
+SMARTLYNQ = ("{node_id 4 level 0 name SmartLynq jtag_cable_manufacturer Xilinx jtag_cable_serial 99887766 "
+             "is_open 1} {node_id 5 level 1 name xc7z020}")
+# what the repair does to a cable that runs at 6034482 Hz, a frequency it does not list: back to 10 MHz
+RESET = ["XSDB jtag frequency", "XSDB jtag frequency -list", "XSDB jtag frequency 10000000", "XSDB jtag frequency",
+         "TCK_RESET 6034482 -> 10000000"]
+LISTED = ["XSDB connect -url tcp:127.0.0.1:3121", "XSDB jtag targets -target-properties"]
+NOT_TOUCHED = "TCK_LEFT cable %s: not the one the target filter names, not looked at"
+NO_FIT = "TCK_FILTER the target filter %s fits no cable as xsdb names them: every cable is looked at"
+windows = pytest.mark.skipif(os.name != "nt", reason="the stand-in for xsdb is a .bat file, started by cmd.exe")
+
+
+@pytest.fixture
+def repair(tcl, tmp_path):
+    """repair(nodes, hz, target_filter) runs jtag_reset_cable_freq of the REPL script in tclsh for the hw_server
+    at 127.0.0.1:3121, with an xsdb.bat next to "Vivado" that runs the stand-in above, and returns the lines
+    xsdb printed. The first one is what xsdb.bat was started with. vivado, temp: the names of the folders that
+    Vivado is installed in and that temporary files go to."""
+    def run(nodes, hz, target_filter=None, url="127.0.0.1:3121", vivado="vivado", temp="temp"):
+        stub = tmp_path / "xsdb_stand_in.tcl"
+        stub.write_text(STAND_IN_XSDB % (nodes, " ".join("%s %s" % item for item in sorted(hz.items()))))
+        (tmp_path / vivado / "bin").mkdir(parents=True, exist_ok=True)
+        (tmp_path / temp).mkdir(exist_ok=True)
+        (tmp_path / vivado / "bin" / "xsdb.bat").write_text(
+            '@echo off\necho XSDB started with %%*\n"%s" "%s" %%1\n' % (TCLSH, stub))
+        repl = tcl(ic.resolve_tcl(None))
+        repl.cmd("set ::env(XILINX_VIVADO) %s; set ::env(TEMP) %s" % (ic.tcl_path(str(tmp_path / vivado)),
+                                                                      ic.tcl_path(str(tmp_path / temp))))
+        here = repl.cmd("pwd")
+        lines = repl.cmd("jtag_reset_cable_freq " + ic.tcl_word(url) + (
+            "" if target_filter is None else " " + ic.tcl_word(target_filter))).split(" | ")
+        assert repl.cmd("pwd") == here                   # the script is in the folder it was in before ...
+        assert os.listdir(str(tmp_path / temp)) == []    # ... and what it wrote for xsdb is gone
+        return lines
+    return run
+
+
+@windows
+@pytest.mark.parametrize("target_filter", [None, "*", ""])
+def test_without_a_target_filter_every_cable_of_the_server_is_repaired(repair, target_filter):
+    # as before the repair knew of a filter: these xsdb commands, in this order
+    lines = repair(HS3 + " " + SMARTLYNQ, {1: 6034482, 4: 6034482}, target_filter)
+    assert lines[1:] == LISTED + ["XSDB jtag targets 1"] + RESET + ["XSDB jtag targets 4"] + RESET
+
+
+@windows
+@pytest.mark.parametrize("target_filter", ["*99887766*", "*/xilinx_tcf/Xilinx/99887766",
+                                           "127.0.0.1:3121/xilinx_tcf/Xilinx/*", "*smartlynq*"])
+def test_only_the_cable_that_the_target_filter_names_is_touched(repair, target_filter):
+    # both cables run at a frequency Vivado cannot represent; the other one is somebody else's
+    lines = repair(HS3 + " " + SMARTLYNQ, {1: 6034482, 4: 6034482}, target_filter)
+    assert lines[1:] == LISTED + [NOT_TOUCHED % "1 (Digilent JTAG-HS3 210299A00001)", "XSDB jtag targets 4"] + RESET
+
+
+@windows
+@pytest.mark.parametrize("target_filter", ["*210299A00001", "127.0.0.1:3121/xilinx_tcf/Digilent/210299A00001",
+                                           "*JTAG-HS3*"])
+def test_cable_is_found_by_the_maker_and_serial_in_its_name(repair, target_filter):
+    lines = repair(HS3 + " " + SMARTLYNQ, {1: 6034482, 4: 6034482}, target_filter)
+    assert lines[1:] == LISTED + ["XSDB jtag targets 1"] + RESET + [NOT_TOUCHED % "4 (SmartLynq)"]
+
+
+@windows
+def test_cable_of_the_session_that_needs_nothing_leaves_the_other_one_alone_all_the_same(repair):
+    # the answer has no TCK_RESET then, and ila_connect says that the cable could not be reset, with this text
+    lines = repair(HS3 + " " + SMARTLYNQ, {1: 15000000, 4: 6034482}, "*210299A00001*")
+    assert lines[3:] == ["XSDB jtag targets 1", "XSDB jtag frequency", "XSDB jtag frequency -list", "TCK_OK 15000000",
+                         NOT_TOUCHED % "4 (SmartLynq)"]
+
+
+@windows
+@pytest.mark.parametrize("target_filter", ["*no-such-cable*", "1"])         # "1": a node id is no name
+def test_filter_that_fits_no_cable_as_xsdb_names_them_leaves_the_repair_as_it_was(repair, target_filter):
+    lines = repair(HS3 + " " + SMARTLYNQ, {1: 6034482, 4: 6034482}, target_filter)
+    assert lines[1:] == (LISTED + [NO_FIT % target_filter, "XSDB jtag targets 1"] + RESET
+                         + ["XSDB jtag targets 4"] + RESET)
+
+
+@windows
+@pytest.mark.parametrize("target_filter", ["*", "*210299A00001*", "*the-name-vivado-gives-it*"])
+def test_single_cable_is_repaired_whatever_the_filter_is(repair, target_filter):
+    # with one cable there is nothing to choose from: the repair must not come to depend on the filter
+    lines = repair(HS3, {1: 6034482}, target_filter)
+    assert [line for line in lines if not line.startswith(("TCK_FILTER", "XSDB started"))] == (
+        LISTED + ["XSDB jtag targets 1"] + RESET)
+
+
+@windows
+def test_address_and_filter_are_text_in_the_script_for_xsdb(repair):
+    lines = repair(HS3, {1: 6034482}, "*[exit]; puts INJECTED; #*", url="[::1]:3121")
+    assert lines[1:4] == ["XSDB connect -url tcp:[::1]:3121", "XSDB jtag targets -target-properties",
+                          NO_FIT % "*[exit]; puts INJECTED; #*"]
+    assert "INJECTED" not in lines and lines[-1] == "TCK_RESET 6034482 -> 10000000"
+
+
+@windows
+@pytest.mark.parametrize("vivado, temp, script_named", [
+    ("vivado", "temp", "in full"),
+    ("my vivado", "temp", "in full"),                    # one word with a blank: cmd takes such a line as it is
+    ("vivado", "my temp", "in full"),
+    ("my vivado", "my temp", "without its folder"),      # two of them: cmd cut the line apart
+    ("vivado", "R&D", "without its folder"),             # "&" ended the command
+    ("my vivado", "R&D", "without its folder"),
+])
+def test_xsdb_is_started_with_a_blank_in_either_folder_and_an_ampersand_in_the_temporary_one(
+        repair, tmp_path, vivado, temp, script_named):
+    lines = repair(HS3, {1: 6034482}, vivado=vivado, temp=temp)
+    assert lines[1:] == LISTED + ["XSDB jtag targets 1"] + RESET
+    script = lines[0][len("XSDB started with "):].strip('"')
+    assert re.fullmatch(r"ila_tck_reset_\d+\.tcl", os.path.basename(script))
+    # a line that worked before is the line it was; only one that could not work names the script differently
+    assert os.path.dirname(script) == (str(tmp_path / temp) if script_named == "in full" else "")
+
+
+@windows
+@pytest.mark.parametrize("vivado", ["R&D", "my R&D", "a,b"])
+def test_xsdb_is_not_started_from_a_vivado_folder_whose_name_cmd_cuts_apart(repair, vivado):
+    # The limit the README states, not a wish: the path of xsdb.bat is the command of the line, and naming the
+    # script differently does not keep cmd from ending it at the "&" (in a path without a blank: at a comma
+    # as well). No cable is reset then, which is what makes ila_connect give the xsdb commands to do it by hand.
+    lines = repair(HS3, {1: 6034482}, vivado=vivado)
+    assert [line for line in lines if line.startswith(("XSDB", "TCK_"))] == []

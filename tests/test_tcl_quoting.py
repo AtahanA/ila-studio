@@ -224,3 +224,128 @@ def test_core_chosen_by_name_is_opened_at_the_first_position():
 def test_xilinx_tools_are_started_through_cmd_on_windows_only():
     assert ic.launch("vivado.bat", "-mode", "tcl") == (["cmd", "/c"] if os.name == "nt" else []) + [
         "vivado.bat", "-mode", "tcl"]
+
+
+def test_where_there_is_no_cmd_the_tool_is_started_with_the_list_as_it_is(monkeypatch):
+    monkeypatch.setattr(ic.os, "name", "posix")
+    argv = ic.launch("/opt/Xilinx/R&D 100%/bin/vivado", "-mode", "tcl", "-source", '/home/user/my "own"/repl.tcl')
+    assert argv == ["/opt/Xilinx/R&D 100%/bin/vivado", "-mode", "tcl", "-source", '/home/user/my "own"/repl.tcl']
+    assert ic.cmd_line(argv) is argv                     # nothing is rewritten and nothing refused
+
+
+def test_list_that_does_not_go_through_cmd_is_handed_on_as_it_is():
+    # a program that is started directly (the tclsh and the Python of these tests) is no business of cmd_line
+    argv = [r"C:\Program Files\Git\mingw64\bin\tclsh.exe", r"C:\R&D 100%\repl.tcl"]
+    assert ic.cmd_line(argv) is argv
+
+
+windows = pytest.mark.skipif(os.name != "nt", reason="the tools are started through cmd.exe on Windows only")
+ARGUMENTS = ("-mode", "tcl", "-nolog", "-nojournal", "-notrace", "-source")
+
+
+@windows
+def test_line_for_cmd_of_an_ordinary_start():
+    line = ic.cmd_line(ic.launch(r"C:\Xilinx\Vivado\2017.4\bin\vivado.bat", *ARGUMENTS,
+                                 r"C:\ila-studio\scripts\vivado_ila_repl.tcl"))
+    # one string, or subprocess would quote it once more. Between the outer quotes, which cmd takes off (/s), it
+    # is the line that was sent before: no word of it needs quotes, and none has got any
+    assert line == ('"%s" /d /s /c "' % os.environ["ComSpec"] + r"C:\Xilinx\Vivado\2017.4\bin\vivado.bat -mode tcl "
+                    r'-nolog -nojournal -notrace -source C:\ila-studio\scripts\vivado_ila_repl.tcl"')
+
+
+@windows
+@pytest.mark.parametrize("word, written", [
+    (r"C:\my tools\vivado.bat", r'"C:\my tools\vivado.bat"'),
+    (r"D:\R&D\vivado.bat", r'"D:\R&D\vivado.bat"'),
+    (r"C:\a^b\x|y<z>\vivado.bat", r'"C:\a^b\x|y<z>\vivado.bat"'),
+    ("C:\\my tools\\", '"C:\\my tools\\\\"'),            # a backslash at the end must not take the quote
+    ("", '""'),
+])
+def test_word_that_cmd_would_not_read_as_text_is_put_in_quotes(word, written):
+    assert ic.cmd_line(ic.launch("vivado.bat", word)).endswith('/c "vivado.bat %s"' % written)
+    assert ic.cmd_line(ic.launch(word, "-mode")).endswith('/c "%s -mode"' % written)
+
+
+@windows
+def test_characters_that_only_end_the_name_of_the_command_are_quoted_there_only():
+    # an argument keeps them without quotes, as before; as the command, cmd would cut the word at them
+    line = ic.cmd_line(ic.launch(r"C:\tools(1),a;b=c\vivado.bat", "-source", r"C:\prog(1),a;b=c\repl.tcl"))
+    assert line.endswith(r'/c ""C:\tools(1),a;b=c\vivado.bat" -source C:\prog(1),a;b=c\repl.tcl"')
+
+
+@windows
+@pytest.mark.parametrize("tools, prog", [
+    ("tools", "prog"),
+    ("my tools", "prog"),                                # a blank in the path of the tool only ...
+    ("tools", "my prog"),                                # ... or of the script only
+    ("tools (x86) 1", "prog"),
+    ("tools", "prog (x86) 1"),
+    ("to@ls", "pr@g"),
+    ("tools", "prog(1),a;b=c"),
+    ("tools", "R&D prog"),                               # "&" in a word that has a blank as well
+])
+def test_start_that_worked_before_gives_the_tool_the_same_arguments(tool, tmp_path, tools, prog):
+    bat, script = tool(tools), str(tmp_path / prog / "repl.tcl")
+    before = tool.started(["cmd", "/c", bat, *ARGUMENTS, script])        # the list, quoted by subprocess
+    assert before is not None and before[1] == [*ARGUMENTS, script]      # it did work before
+    # the same text reaches the wrapper (%*), and so the same arguments the tool
+    assert tool.started(ic.cmd_line(ic.launch(bat, *ARGUMENTS, script))) == before
+
+
+@windows
+@pytest.mark.parametrize("tools, prog", [
+    ("my tools", "my prog"),                             # a blank in both: cmd looked for a program "C:\...\my"
+    ("tools", "R&D"),                                    # "&": the line was cut there, the rest run as a command
+    ("R&D", "prog"),
+    ("R&D tools", "R&D prog"),
+    ("R&D", "my prog"),
+])
+def test_start_that_failed_before_works(tool, tmp_path, tools, prog):
+    bat, script = tool(tools), str(tmp_path / prog / "repl.tcl")
+    before = tool.started(["cmd", "/c", bat, *ARGUMENTS, script])
+    assert before is None or before[1] != [*ARGUMENTS, script]           # what the issue is about
+    raw, arguments = tool.started(ic.cmd_line(ic.launch(bat, *ARGUMENTS, script)))
+    assert arguments == [*ARGUMENTS, script]
+    assert raw.startswith("-mode tcl -nolog -nojournal -notrace -source ")      # the wrapper reads these as text
+
+
+@windows
+@pytest.mark.parametrize("tools, prog", [("a^b", "prog"), ("tools", "a^b"), ("tools(1)", "prog"), ("a,b", "prog"),
+                                         ("a;b", "prog"), ("a=b", "prog"), ("it's", "it's a prog")])
+def test_other_characters_in_a_path_reach_the_tool_as_they_are(tool, tmp_path, tools, prog):
+    bat, script = tool(tools), str(tmp_path / prog / "repl.tcl")
+    assert tool.started(ic.cmd_line(ic.launch(bat, *ARGUMENTS, script)))[1] == [*ARGUMENTS, script]
+
+
+@windows
+def test_no_argument_can_start_a_second_command(tool, tmp_path):
+    marker = tmp_path / "second.txt"
+    argument = "tcp:a&echo x>%s&rem" % marker.name
+    assert tool.started(ic.cmd_line(ic.launch(tool("tools"), "repl.tcl", argument)))[1] == ["repl.tcl", argument]
+    assert not marker.exists()
+
+
+@windows
+@pytest.mark.parametrize("tools, prog, name", [
+    ("tools", "100%", "a percent sign"),                 # one alone: cmd leaves it, a wrapper with "call" drops it
+    ("%TEMP%", "prog", "a percent sign"),                # cmd writes the folder of the variable in its place
+    ("tools", "%ComSpec% prog", "a percent sign"),
+    ("tools", 'my "own" prog', "a double quote"),
+])
+def test_percent_sign_or_double_quote_is_refused_with_a_sentence(tmp_path, tools, prog, name):
+    bat, script = str(tmp_path / tools / "vivado.bat"), str(tmp_path / prog / "repl.tcl")
+    with pytest.raises(RuntimeError) as refused:
+        ic.cmd_line(ic.launch(bat, *ARGUMENTS, script))
+    wrong = bat if "%" in tools else script
+    assert str(refused.value) == ("vivado.bat cannot be started: %s holds %s, which cmd.exe does not pass on as it "
+                                  "is written. The program folder, the path of a tool or of a Tcl script, or the "
+                                  "address has to do without it" % (wrong, name))
+
+
+@windows
+def test_tool_is_not_started_at_all_with_a_word_that_is_refused(monkeypatch, tmp_path):
+    started = []
+    monkeypatch.setattr(ic.subprocess, "Popen", lambda *args, **more: started.append(args))
+    with pytest.raises(RuntimeError, match="holds a percent sign"):
+        ic.Repl(ic.launch(str(tmp_path / "vivado.bat"), "-source", r"C:\100%\repl.tcl"), "vivado", None)
+    assert started == []

@@ -272,7 +272,7 @@ GUI (React)  --invoke-->  Rust (async commands, never on the UI thread)
 | `the probe file does not name the debug hub clock, so TCK (...) was not limited to hub clock / 2.5`, in the message of a connect or a capture | With the JTAG clock on `Auto`: the probe file has no entry for the clock of the debug hub, so there was nothing to hold the cable's own frequency against. | Nothing, while the captures work. If the core stays IDLE, choose a JTAG clock at or below hub clock / 2.5 yourself. |
 | `ila_bridge.py was not found in ...` | The executable was copied without the scripts. | Keep `ila-studio.exe` in the folder that `make_distribute.ps1` made. |
 | `hw_server at ... is not reachable` | Wrong address, network, cable off. | Checked in 3 s before Vivado is started. Check the address and the cable. |
-| `[Common 17-70] Application Exception: bad enum default`, then no hardware targets | The cable runs at a TCK frequency Vivado cannot represent (a SmartLynq asked for 6 MHz reports 6034482 Hz), left behind by an earlier session while another client (e.g. an SDK debug session) kept the cable open. | Detected and repaired automatically (xsdb puts the cable back to 10 MHz, then the connect is retried). Every session also restores the cable's frequency when it ends. Seen in ANOTHER Vivado while ILA Studio is connected: click Disconnect here first. |
+| `[Common 17-70] Application Exception: bad enum default`, then no hardware targets | The cable runs at a TCK frequency Vivado cannot represent (a SmartLynq asked for 6 MHz reports 6034482 Hz), left behind by an earlier session while another client (e.g. an SDK debug session) kept the cable open. | Detected and repaired automatically (xsdb puts the cable back to 10 MHz, then the connect is retried). On a hw_server with several cables, every cable that runs at such a frequency is put back; where the selected profile names a cable with `hardware.target_filter`, only that one is. A cable that was left alone is named in the log (`TCK_LEFT`), and in the message when the connect still fails: it may then be the one in the way. Every session also restores the cable's frequency when it ends. Seen in ANOTHER Vivado while ILA Studio is connected: click Disconnect here first. |
 | `the ILA core does not run: it is still IDLE after being armed` | TCK too fast for the debug hub clock, or the ILA clock is stopped. In a session that has been open for a while: another program has changed the cable's JTAG clock. | Use `Auto` (or a frequency at or below hub clock / 2.5). Where the message says that the probe file does not name the hub clock, `Auto` has nothing to go by: choose the frequency yourself. A kept session reconnects by itself and tries the capture once more; otherwise Disconnect and Connect. |
 | `no ILA core found on ...: Vivado sees the device but no debug hub in it` | The FPGA is not configured yet (right after power-up), its debug hub clock is not running, or the bitstream has no ILA / the `.ltx` belongs to another build. | Wait for the board to boot, load the matching bitstream / pick the matching `.ltx`. |
 | `the JTAG chain is empty` | The cable answers but sees no device. | Power the board. |
@@ -294,8 +294,13 @@ GUI (React)  --invoke-->  Rust (async commands, never on the UI thread)
   the layout of such an installation and has not been run against one.
 - The last changes before this release (how addresses, paths and triggers are written into the Tcl commands
   for Vivado) were checked against a Tcl interpreter and by the tests, not yet against Vivado itself.
-- Untested: a program folder or a user profile whose path has spaces or non-ASCII characters. Not supported:
-  `&`, `%` or quotes in the path of the program folder or of a tool.
+- Untested: a program folder or a user profile whose path has spaces or non-ASCII characters. That Vivado and
+  xsct are started correctly from a path with spaces or `&` - of the program folder, of a tool or of a Tcl
+  script - was checked with stand-ins for the tools, not yet with the tools themselves. Not supported: `%` in
+  such a path (a hardware job is then refused with a message that says so) and `^`. The automatic repair of
+  `bad enum default` cannot start xsdb when the path of the folder Vivado is installed in holds `&` (or, with
+  no space in it, one of `( ) , ; =`): the message of the connect then gives the xsdb commands that put the
+  cable back by hand.
 - A profile and a custom Tcl script are run as code: use only those you trust. See [SECURITY.md](SECURITY.md).
 - No installer, and the executables are not signed.
 - Hook mode exists on the command line only.

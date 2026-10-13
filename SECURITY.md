@@ -47,10 +47,6 @@ that is a vulnerability and in scope:
 - in a profile: the address, paths, filters, the trigger, `capture.radix`, `capture.capture_mode`,
   `capture.format`, `capture.position` and `capture.timeout_min`.
 
-Known gaps:
-
-- The hook mode hands `hardware.core_filter` to xsct through `cmd /c` as it is written.
-
 A capture file is read a piece at a time, and one that holds more than 2 GB of text is refused (for a `.csv.gz`
 or a `.ila`: the text it unpacks to). A probe file is read whole, and only up to 64 MB.
 
@@ -102,8 +98,8 @@ or a `.ila`: the text it unpacks to). A probe file is read whole, and only up to
 
 - The device is never programmed. The JTAG clock of the cable is changed when needed and put back when the
   session ends. A session that is killed cannot put it back; the next connect repairs that.
-- Hook mode halts and resumes a CPU on the board, and with `--plant` sets a breakpoint. Use it only where a
-  halted CPU does no harm.
+- Hook mode halts and resumes a CPU on the board, and with `--plant` sets a breakpoint, which it removes again
+  before the run ends. Use it only where a halted CPU does no harm.
 
 ### Files on your PC
 
@@ -125,5 +121,7 @@ published with a release, or build from source.
 ## Known limitations
 
 - Windows only.
-- The characters `&`, `%` and quotes in the path of the program folder or of a tool are not supported: the
-  tools are started through `cmd /c`. Paths with spaces or non-ASCII characters are untested.
+- `%` in the path of the program folder, of a tool or of a Tcl script is not supported: the tools are started
+  through `cmd.exe`, which does not pass it on as it is written, and a hardware job is refused with a message
+  that says so. `^` is not supported either. Paths with spaces, `&` or non-ASCII characters are untested with
+  the tools themselves.

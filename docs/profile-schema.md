@@ -77,6 +77,11 @@ uses the same code to connect and to capture. "Page" means the capture tab of th
 The defaults are the folders that Vivado 2017.4 and the SDK 2019.1 install into. They are only defaults: a
 profile for the `hook` command states `xsct`, `nm` and `objdump` of its own installation (SDK or Vitis).
 
+Vivado and xsct are started through `cmd.exe`, on a line that keeps a path of `vivado`, `xsct` or `tcl_script`
+with spaces or `&` in one piece. A path that holds `%` is refused when the tool is to be started, with a
+message that names it: `cmd.exe` does not pass a `%` on as it is written. The same holds for the program
+folder, which is part of the path of the bundled scripts.
+
 ## `hardware`
 
 | Key | Type | Default | Meaning |
@@ -84,11 +89,11 @@ profile for the `hook` command states `xsct`, `nm` and `objdump` of its own inst
 | `url` | text | `"127.0.0.1:3121"` | The hw_server, as `host:port`. Vivado and xsct both connect to it. |
 | `ltx` | path | `""` | The probe file (`.ltx`) that the implementation run wrote for the bitstream on the board. Required: without it the probes have no names. |
 | `device_filter` | glob | `"*"` | The device on the JTAG chain. With `*` the chain is searched for the device that carries the ILA (the ARM debug port of a Zynq is skipped). A glob such as `xc7z020*` pins it. |
-| `target_filter` | glob | `"*"` | The JTAG target, for a hw_server with several cables, e.g. `*<cable serial>*`. The first target that matches is used. There is no field for it in the GUI and no command-line option. |
+| `target_filter` | glob | `"*"` | The JTAG target, for a hw_server with several cables, e.g. `*<cable serial>*`. The first target that matches is used. There is no field for it in the GUI and no command-line option. The filter also says which cable the repair of "bad enum default" may put back to 10 MHz: only one it fits - by the name Vivado gives its target, `<address>/xilinx_tcf/<maker>/<serial>`, or by what xsdb reports for the cable, such as its name `<maker> <product> <serial>`. With `*`, and with a filter that fits no cable that way, every cable of the hw_server that needs it is put back. |
 | `jtag_frequency_hz` | integer | `0` | The JTAG clock (TCK) in Hz. `0` is automatic: the cable's own frequency, lowered only when it is above debug hub clock / 2.5 (the hub clock is read from the probe file; where the file does not name it, nothing is lowered and the session says so). Any other value is used as given, snapped down to a frequency the cable offers. |
 | `ila_index` | integer | `0` | Which ILA core of the device is captured, by its position in the device's list (the `info` command prints the list). |
 | `ila_cell` | text | none | The ILA core by its cell name, as the probe file names it. It wins over `ila_index`. The GUI sends the cell name of the selected core with its jobs and does not store this key in a saved profile (the name of the core is kept in `gui.core`). |
-| `core_filter` | text | `""` | The xsct target that runs the firmware, for the `hook` command. Empty means core 0 of a Zynq-7000: `name =~ "*Cortex-A9*#0*"`. |
+| `core_filter` | text | `""` | The xsct target that runs the firmware, for the `hook` command. Empty means core 0 of a Zynq-7000: `name =~ "*Cortex-A9*#0*"`. Any filter that xsct takes can be given, also one with `&&`: it reaches xsct as text, not on a command line. |
 
 Forms of `url` that are accepted, by the GUI and by the command line alike (also for `--server`): a host name
 or an IPv4 address, with or without `:port`; an IPv6 address in brackets, with or without `:port`; a bare IPv6
@@ -166,8 +171,11 @@ void announce_step(uint32_t n, int32_t ppm)
 
 The breakpoint is yours to set: in your debugger, or with `--plant`, which plants a hardware breakpoint at the
 hook function the first time the script finds the CPU halted somewhere else. Apart from that the script only
-reads the state and the memory of the CPU and resumes it; nothing is downloaded or reset. When the script ends
-it resumes a CPU that is still halted at the hook.
+reads the state and the memory of the CPU and resumes it; nothing is downloaded or reset. When the script
+ends, whatever ends it (`--count`, `--minutes`, the end value, Ctrl-C or an error), it first removes the
+breakpoint it planted and then resumes a CPU that is still halted at the hook. A breakpoint of your debugger
+is left as it is. The log says `planted a hardware breakpoint ...` and `removed the hardware breakpoint ...`,
+or why one of the two did not work.
 
 In the mode `arm_and_collect_next` a capture is named after the fields that were read when its window was
 armed. The fields read at the halt that collects it are stored in `index.csv` as well, with `now_` in front

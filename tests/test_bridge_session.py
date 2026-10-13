@@ -4,6 +4,7 @@
 """A hardware job of the GUI inside the bridge: what is checked before a session is made for it, and the two
 jobs - connect and capture - run against the recorder that stands in for Vivado."""
 import json
+import os
 import types
 
 import pytest
@@ -233,6 +234,27 @@ def test_script_is_not_run_with_a_profile_that_is_gone(monkeypatch, write, tmp_p
     assert ib.cmd_run_tcl(job("run-tcl", "--tcl", write("mine.tcl", ""), "--profile", gone)) == 1
     assert result_of(capsys)["message"] == "profile not found: " + gone
     assert started == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the tools are started through cmd.exe on Windows only")
+@pytest.mark.parametrize("tools, scripts", [("tools", "scripts"), ("my tools", "my scripts"), ("R&D", "R&D")])
+def test_script_is_run_by_a_vivado_whatever_the_folders_are_called(tool, write, tmp_path, capsys, tools, scripts):
+    (tmp_path / scripts).mkdir(exist_ok=True)
+    script = write(os.path.join(scripts, "mine.tcl"), "")
+    profile = write("board.json", json.dumps({"tools": {"vivado": tool(tools)}}))
+    assert ib.cmd_run_tcl(job("run-tcl", "--tcl", script, "--profile", profile)) == 0
+    # what the stand-in for Vivado was started with: the batch mode, and the script as the last argument
+    assert 'ARGV:' + json.dumps(["-mode", "batch", "-nolog", "-nojournal", "-notrace", "-source", script]) in (
+        result_of(capsys)["rawOutput"].splitlines())
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the tools are started through cmd.exe on Windows only")
+def test_script_in_a_folder_that_cannot_be_written_for_cmd_is_refused_with_the_reason(tool, write, tmp_path, capsys):
+    (tmp_path / "100%").mkdir()
+    script = write(os.path.join("100%", "mine.tcl"), "")
+    profile = write("board.json", json.dumps({"tools": {"vivado": tool("tools")}}))
+    assert ib.cmd_run_tcl(job("run-tcl", "--tcl", script, "--profile", profile)) == 1
+    assert result_of(capsys)["message"].startswith("vivado.bat cannot be started: %s holds a percent sign" % script)
 
 
 def test_run_of_windows_with_two_vivado_engines(vivado, reachable, ltx, tmp_path, capsys, monkeypatch):

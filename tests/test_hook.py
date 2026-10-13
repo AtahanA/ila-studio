@@ -91,12 +91,13 @@ def hook(vivado, cli, monkeypatch, write, tmp_path):
     monkeypatch.setattr(ic, "elf_symbol", lambda prof, elf, name: symbols[name])
     monkeypatch.setattr(ic, "elf_callsites", lambda prof, elf, name: set())
 
-    def run(mode, *more):
+    def run(mode, *more, hardware=None, **hook_keys):
         profile = write("hook.json", json.dumps({
+            "hardware": hardware or {},
             "capture": {"trigger": "frame_start eq1'bR", "position": 300},
-            "hook": {"symbol": "capture_hook", "info_symbol": "capture_info", "magic": "0x1234",
-                     "fields": ["step", "offset"], "signed_fields": ["offset"],
-                     "name_template": "run{run}_step{step:03d}_{offset}", "mode": mode}}))
+            "hook": dict({"symbol": "capture_hook", "info_symbol": "capture_info", "magic": "0x1234",
+                          "fields": ["step", "offset"], "signed_fields": ["offset"],
+                          "name_template": "run{run}_step{step:03d}_{offset}", "mode": mode}, **hook_keys)}))
         # --minutes 1: a run that never sees its halt ends by itself, and the test fails instead of waiting an hour
         return cli("--profile", profile, "--ltx", str(tmp_path / "top.ltx"), "--out", str(tmp_path / "out"),
                    "hook", "--elf", "app.elf", "--minutes", "1", *more)
@@ -125,7 +126,15 @@ def test_run_that_ends_in_an_error_exits_with_1(vivado, hook, tmp_path):
     (session,) = (tmp_path / "out").iterdir()
     log = (session / "session.log").read_text()
     assert "ERROR: xsct: 'core_state' failed: no targets found" in log
-    assert "could not check/resume the core" in log
+    assert vivado.to["xsct"] == ["core_state", "(resync)", "core_state"]         # asked once more at the end
+
+
+def test_xsct_that_no_longer_answers_at_the_end_is_said(vivado, hook, tmp_path):
+    vivado.failing["(resync)"] = "xsct is no longer usable (it timed out or exited)"
+    assert hook("capture_now", "--count", "0") == 0
+    # no breakpoint was planted: there is nothing to say about one
+    assert session_log(tmp_path).rstrip().endswith(
+        "could not check/resume the core: xsct is no longer usable (it timed out or exited)")
 
 
 def test_run_that_comes_to_its_end_exits_with_0(vivado, hook):
@@ -148,3 +157,147 @@ def test_xsct_is_not_started_with_text_that_is_no_address(vivado, hook):
     message = hook("capture_now", "--count", "1", "--server", "a&echo.SECOND&rem")
     assert message.startswith("'a&echo.SECOND&rem' is not a hw_server address")
     assert vivado.started == {}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the tools are started through cmd.exe on Windows only")
+def test_xsct_is_not_started_with_an_address_that_cmd_would_not_pass_on(vivado, hook, tmp_path):
+    # the zone of an IPv6 address is an address all right, but its "%" does not get through cmd and the wrapper
+    assert hook("capture_now", "--count", "1", "--server", "[fe80::1%12]") == 1
+    assert "xsct" not in vivado.started
+    (session,) = (tmp_path / "out").iterdir()
+    assert ("ERROR: xsct.bat cannot be started: tcp:[fe80::1%12]:3121 holds a percent sign, which cmd.exe does not "
+            "pass on as it is written.") in (session / "session.log").read_text()
+
+
+def test_core_filter_reaches_xsct_as_its_first_command_not_on_its_command_line(vivado, hook):
+    # a filter of xsct has quotes of its own and may hold "&&": neither can be written on a line for cmd
+    core_filter = 'name =~ "*Cortex-A9*#0*" && jtag_cable_name =~ "*210299A00001"'
+    hook("capture_now", "--count", "0", hardware={"core_filter": core_filter})
+    assert vivado.started["xsct"][-2:] == [os.path.join(ic.HERE, "xsct_repl.tcl"), "tcp:127.0.0.1:3121"]
+    assert vivado.to["xsct"][0] == ('set ::CORE_FILTER "name =~ \\"*Cortex-A9*#0*\\" && jtag_cable_name =~ '
+                                    '\\"*210299A00001\\""')
+
+
+def test_without_a_core_filter_the_one_of_the_script_stays(vivado, hook):
+    hook("capture_now", "--count", "0")
+    assert not [command for command in vivado.to["xsct"] if "CORE_FILTER" in command]
+
+
+# ---------------------------------------------------------------- the breakpoint of --plant
+ELSEWHERE, AT_HOOK = "Stopped: (Breakpoint) 0x00100a00", "Stopped: (Breakpoint) 0x00100f00"
+STEP_7 = "0x00001234 0x00000007 0xfffffffe"              # magic, step = 7, offset = -2
+
+
+def session_log(tmp_path):
+    (session,) = (tmp_path / "out").iterdir()
+    return (session / "session.log").read_text()
+
+
+@pytest.fixture
+def cpu(vivado):
+    """A CPU that is found halted somewhere else first and at the hook from then on, with step 7 in its info
+    struct. xsct calls a breakpoint it is asked to plant number 3. The fixture is the recorder."""
+    vivado.answers.update({"core_state": [ELSEWHERE, AT_HOOK], "read_words": STEP_7, "add_bp": "3", "del_bp": "3"})
+    return vivado
+
+
+@pytest.fixture
+def minutes_pass(monkeypatch):
+    """Every pause of the driver takes a minute of the clock the driver reads, and no time: a run of one minute
+    is over after its first pause."""
+    real = ic.time
+
+    class Clock:
+        now = real.time()
+
+        def time(self):
+            return Clock.now
+
+        def sleep(self, seconds):
+            Clock.now += 60
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+    monkeypatch.setattr(ic, "time", Clock())
+
+
+def test_planted_breakpoint_is_removed_before_the_core_is_resumed_for_the_last_time(cpu, hook, tmp_path):
+    assert hook("capture_now", "--count", "2", "--plant") == 0
+    assert cpu.to["xsct"] == [
+        "core_state", "add_bp 0x00100f00",                           # halted somewhere else: planted
+        "core_state", "read_words 0x00200000 3", "resume",           # halted at the hook: captured, resumed
+        "core_state", "read_words 0x00200000 3",                     # the last capture: not resumed yet ...
+        "(resync)", "del_bp", "core_state", "resume"]                # ... the breakpoint goes first, then the core
+    log = session_log(tmp_path)
+    assert "planted a hardware breakpoint at 0x00100f00 while halted at 0x00100a00 (breakpoint 3 of xsct)" in log
+    assert "removed the hardware breakpoint at 0x00100f00 (breakpoint 3 of xsct)" in log
+
+
+@pytest.mark.parametrize("ended_by, code", [("no memory at this address", 1), (KeyboardInterrupt(), 0)],
+                         ids=["an error", "Ctrl-C"])
+def test_breakpoint_is_removed_when_the_run_is_cut_short(cpu, hook, ended_by, code):
+    cpu.failing["read_words"] = ended_by
+    assert hook("capture_now", "--count", "5", "--plant") == code
+    assert cpu.to["xsct"] == ["core_state", "add_bp 0x00100f00", "core_state", "read_words 0x00200000 3",
+                              "(resync)", "del_bp", "core_state", "resume"]
+
+
+def test_breakpoint_is_removed_when_ctrl_c_came_before_xsct_had_answered_the_planting(cpu, hook, tmp_path):
+    # the driver never read which breakpoint it is. The Tcl side kept its id, and is asked all the same
+    cpu.failing["add_bp"] = KeyboardInterrupt()
+    assert hook("capture_now", "--count", "5", "--plant") == 0
+    assert cpu.to["xsct"] == ["core_state", "add_bp 0x00100f00", "(resync)", "del_bp", "core_state", "resume"]
+    assert "removed the hardware breakpoint at 0x00100f00 (breakpoint 3 of xsct)" in session_log(tmp_path)
+
+
+def test_breakpoint_is_removed_when_the_minutes_are_over(cpu, hook, minutes_pass):
+    cpu.answers["core_state"] = [ELSEWHERE, "Running"]
+    assert hook("capture_now", "--count", "5", "--plant") == 0
+    assert cpu.to["xsct"] == ["core_state", "add_bp 0x00100f00", "(resync)", "del_bp", "core_state"]
+
+
+@pytest.mark.parametrize("mode", ["capture_now", "arm_and_collect_next"])
+def test_breakpoint_is_removed_when_the_target_reports_the_end(cpu, hook, mode):
+    assert hook(mode, "--count", "5", "--plant", sequence_field="step", end_value=7) == 0
+    assert cpu.to["xsct"] == ["core_state", "add_bp 0x00100f00", "core_state", "read_words 0x00200000 3",
+                              "(resync)", "del_bp", "core_state", "resume"]
+
+
+def test_breakpoint_that_xsct_did_not_plant_is_not_logged_as_planted(cpu, hook, tmp_path):
+    cpu.failing["add_bp"] = "no hardware breakpoint is free"
+    cpu.answers["del_bp"] = ""                           # what the Tcl side answers when it planted nothing
+    assert hook("capture_now", "--count", "1", "--plant") == 0           # the run goes on: a debugger may halt it
+    log = session_log(tmp_path)
+    assert ("NO breakpoint was planted at 0x00100f00: no hardware breakpoint is free - the core only halts at "
+            "the hook where a debugger has a breakpoint") in log
+    assert "planted a hardware breakpoint" not in log and "removed the hardware breakpoint" not in log
+    assert cpu.to["xsct"].count("add_bp 0x00100f00") == 1                # asked once, at the first halt
+
+
+def test_breakpoint_that_cannot_be_removed_is_said_and_the_core_resumed_all_the_same(cpu, hook, tmp_path):
+    cpu.failing["del_bp"] = "Breakpoint 3 not found"
+    assert hook("capture_now", "--count", "1", "--plant") == 0
+    assert cpu.to["xsct"][-4:] == ["(resync)", "del_bp", "core_state", "resume"]
+    assert ("WARNING the hardware breakpoint at 0x00100f00 could NOT be removed (Breakpoint 3 not found): the core "
+            "may halt at the hook once more and stay halted") in session_log(tmp_path)
+
+
+def test_xsct_that_no_longer_answers_at_the_end_leaves_a_word_about_the_breakpoint(cpu, hook, tmp_path):
+    cpu.failing["(resync)"] = "xsct is no longer usable (it timed out or exited)"
+    assert hook("capture_now", "--count", "1", "--plant") == 0
+    assert ("could not check/resume the core: xsct is no longer usable (it timed out or exited) - and the hardware "
+            "breakpoint planted at 0x00100f00 may still be set") in session_log(tmp_path)
+
+
+def test_run_without_plant_plants_nothing_and_removes_nothing(cpu, hook):
+    # the breakpoint is somebody else's (a debugger's): the core is resumed after every capture, as before
+    assert hook("capture_now", "--count", "1") == 0
+    assert cpu.to["xsct"] == ["core_state", "core_state", "read_words 0x00200000 3", "resume",
+                              "(resync)", "core_state", "resume"]
+
+
+def test_run_without_plant_resumes_the_core_when_the_target_reports_the_end(cpu, hook):
+    assert hook("arm_and_collect_next", "--count", "5", sequence_field="step", end_value=7) == 0
+    assert cpu.to["xsct"] == ["core_state", "core_state", "read_words 0x00200000 3", "resume",
+                              "(resync)", "core_state", "resume"]

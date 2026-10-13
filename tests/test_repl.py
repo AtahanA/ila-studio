@@ -3,6 +3,8 @@
 
 """The Repl class against a stand-in for the Tcl process: a few lines of Python that speak the protocol of
 scripts/vivado_ila_repl.tcl - "@@READY" once, then "@@RC", "@@RES" and "@@END" after every line they are sent."""
+import json
+import os
 import sys
 import time
 
@@ -12,9 +14,10 @@ import ila_capture as ic
 
 # Answers every line with the line itself; a line starting with "error" fails, "die" ends the process without
 # an answer, and "exit" ends it the way Vivado does. "chatter" is never answered: the process prints a line
-# every 50 ms for a quarter of a minute and then ends.
+# every 50 ms for a quarter of a minute and then ends. "format <text>" is answered with the text, as Tcl does,
+# and "argv" with the arguments the stand-in was started with.
 STAND_IN = """\
-import sys, time
+import json, sys, time
 print("@@READY", flush=True)
 for line in sys.stdin:
     line = line.rstrip("\\n")
@@ -27,7 +30,8 @@ for line in sys.stdin:
         break
     print("output of " + line)
     print("@@RC %d" % line.startswith("error"))
-    print("@@RES " + line)
+    answer = json.dumps(sys.argv[1:]) if line == "argv" else line[7:] if line.startswith("format ") else line
+    print("@@RES " + answer)
     print("@@END", flush=True)
     if line == "exit":
         print("Exiting Vivado", flush=True)
@@ -107,6 +111,75 @@ def test_command_runs_out_of_time_although_the_process_keeps_printing(start):
     assert time.monotonic() - began < 8                  # ... and not when the process ends by itself, after 15 s
     assert repl.dead                                     # an answer that came now would be taken for the next one's
     assert "[vivado] still busy" in start.log
+
+
+# ---------------------------------------------------------------- a command that was cut short
+@pytest.fixture
+def cut_short(start):
+    """A Repl whose command "core_state" was just ended by Ctrl-C between the lines of its answer: the
+    KeyboardInterrupt comes while the line the process printed before its answer is logged."""
+    def ctrl_c(msg, quiet=False):
+        start.log.append(msg)
+        if msg == "[vivado] output of core_state":
+            raise KeyboardInterrupt
+
+    repl = start()
+    log, repl.log = repl.log, ctrl_c
+    with pytest.raises(KeyboardInterrupt):
+        repl.cmd("core_state")
+    repl.log = log
+    return repl
+
+
+def test_answers_fit_again_once_they_were_lined_up(cut_short, start):
+    # left alone, the next command would be handed the answer nobody read, and its own would go to the one after
+    cut_short.resync()
+    assert cut_short.cmd("del_bp") == "del_bp"
+    assert cut_short.cmd("core_state") == "core_state"
+    assert "[vivado] @@RES core_state" in start.log      # the answer nobody had read is in the log
+
+
+def test_lining_up_does_nothing_to_a_repl_that_is_in_step(start):
+    repl = start()
+    repl.resync()
+    repl.resync()
+    assert repl.cmd("ila_info") == "ila_info"
+    assert [line for line in start.log if "@@RES" in line] == []         # no answer was left over to read off
+
+
+def test_lining_up_gives_up_on_a_process_that_does_not_answer(start):
+    def ctrl_c(msg, quiet=False):
+        raise KeyboardInterrupt
+
+    repl = start()
+    repl.log = ctrl_c
+    with pytest.raises(KeyboardInterrupt):
+        repl.cmd("chatter")                              # never answered, and nothing that is sent after it
+    repl.log = lambda msg, quiet=False: None
+    with pytest.raises(RuntimeError, match="vivado did not answer within 1 s"):
+        repl.resync(timeout=1)
+    assert repl.dead                                     # as after a command that ran out of time
+
+
+# ---------------------------------------------------------------- through a .bat wrapper
+@pytest.mark.skipif(os.name != "nt", reason="the tools are started through cmd.exe on Windows only")
+@pytest.mark.parametrize("tools, prog", [("tools", "prog"), ("my tools", "my prog"), ("R&D", "R&D"),
+                                         ("R&D tools (x64)", "R&D prog, 2nd")])
+def test_tool_behind_a_bat_wrapper_is_started_spoken_to_and_closed(tmp_path, tools, prog):
+    # as the Xilinx tools are started: cmd runs a .bat, which starts the program with the arguments it was given
+    (tmp_path / tools).mkdir()
+    (tmp_path / tools / "tcl_stand_in.py").write_text(STAND_IN)
+    bat = tmp_path / tools / "vivado.bat"
+    bat.write_text('@"%s" -B "%%~dp0tcl_stand_in.py" %%*\n' % sys.executable)
+    script, log = str(tmp_path / prog / "repl.tcl"), []
+    repl = ic.Repl(ic.launch(str(bat), "-mode", "tcl", "-source", script), "vivado",
+                   lambda msg, quiet=False: log.append(msg))
+    try:
+        assert json.loads(repl.cmd("argv")) == ["-mode", "tcl", "-source", script]
+    finally:
+        repl.close()
+        repl.p.wait(timeout=30)
+    assert "[vivado] Exiting Vivado" in log              # it was reached through the pipe to the very end
 
 
 def test_process_that_keeps_printing_and_never_gets_ready_is_given_up(monkeypatch):

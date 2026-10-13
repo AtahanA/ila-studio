@@ -6,9 +6,11 @@ into pytest's tmp_path first, and where the driver would start Vivado a recorder
 import gc
 import glob
 import gzip
+import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 import tracemalloc
@@ -108,16 +110,21 @@ UPLOAD = "Sample in Buffer,Sample in Window,TRIGGER,top/u1/rx_valid,top/u1/data[
 
 
 class Sent(list):
-    """The Tcl commands the driver sent, in order. answers: what is answered, by the first word of a command.
-    failing: the commands that fail instead, by their first word, with the reason the Tcl side gives. script:
-    what the Tcl script says about itself when the driver asks (its version and what it lacks). started: the
-    command line of every process the driver would have started, by the name it gave it."""
+    """The Tcl commands the driver sent, in order. answers: what is answered, by the first word of a command; a
+    list is answered item by item, its last item from then on. failing: the commands that fail instead, by their
+    first word, with the reason the Tcl side gives (the answer, for a caller that looks at it itself) - or with
+    the exception that is raised while the answer is awaited (KeyboardInterrupt: Ctrl-C). script: what the Tcl
+    script says about itself when the driver asks (its version and what it lacks). started: the command line of
+    every process the driver would have started, by the name it gave it. to: the commands by the process they
+    went to ("vivado", "xsct"); where the driver lines the answers of a process up again (Repl.resync),
+    "(resync)" stands among them."""
     def __init__(self):
         list.__init__(self)
         self.answers = dict(ANSWERS)
         self.failing = {}
         self.script = "version=%d;missing=" % ila_capture.SCRIPT_VERSION
         self.started = {}
+        self.to = {}
 
 
 @pytest.fixture
@@ -129,6 +136,7 @@ def vivado(monkeypatch, tmp_path):
     class Recorder:
         def __init__(self, argv, name, log):
             self.name, self.dead, self.writing = name, False, None
+            ila_capture.cmd_line(argv)                     # what the Repl would refuse to start is refused here
             sent.started[name] = list(argv)
             self.p = types.SimpleNamespace(pid=0, poll=lambda: None)
 
@@ -136,8 +144,13 @@ def vivado(monkeypatch, tmp_path):
             if len(sent) >= 1000:                          # a loop of the driver that does not end: fail, not hang
                 raise RuntimeError("the recorder was sent more than 1000 commands")
             sent.append(tcl)
+            sent.to.setdefault(self.name, []).append(tcl)
             word = tcl.split(" ")[0]
+            if isinstance(sent.failing.get(word), BaseException):
+                raise sent.failing[word]
             if word in sent.failing:
+                if not check:                              # as the Repl does: the reason is the answer then
+                    return sent.failing[word]
                 raise RuntimeError("%s: '%s' failed: %s" % (self.name, tcl, sent.failing[word]))
             if word == "ila_collect_rearm":
                 # An upload takes time. "watch" divides by the time a window took, and the clock it reads is
@@ -149,7 +162,15 @@ def vivado(monkeypatch, tmp_path):
                     f.write(UPLOAD.encode("ascii"))
             if tcl.startswith("set ::ILA_CHECK"):          # the question about the script's version
                 return sent.script
-            return "0" if tcl == "set ::ILA_INDEX" else sent.answers.get(word, "")
+            answer = sent.answers.get(word, "")
+            if isinstance(answer, list):
+                answer = answer.pop(0) if len(answer) > 1 else answer[0]
+            return "0" if tcl == "set ::ILA_INDEX" else answer
+
+        def resync(self, timeout=60):
+            sent.to.setdefault(self.name, []).append("(resync)")
+            if "(resync)" in sent.failing:                 # the process no longer answers
+                raise RuntimeError(sent.failing["(resync)"])
 
         def settle(self, timeout=660):
             pass
@@ -185,6 +206,36 @@ def no_vivado(monkeypatch, tmp_path):
     monkeypatch.setattr(ila_capture.shutil, "which", lambda name: None)
     monkeypatch.setattr(ila_capture.glob, "glob",
                         lambda pattern: real_glob(pattern) if pattern.startswith(str(tmp_path)) else [])
+
+
+# A stand-in for a tool that is started through a .bat wrapper. It prints what it was started with: "RAW:" and
+# the arguments as cmd hands them to a batch file (%*), then "ARGV:" and the arguments as a program gets them
+# that the batch file starts with %* - which is what the wrappers of the tools do with theirs.
+STAND_IN_BAT = ('@echo off\r\necho RAW:%*\r\n'
+                '"{python}" -c "import sys, json; print(\'ARGV:\' + json.dumps(sys.argv[1:]))" %*\r\n')
+
+
+@pytest.fixture
+def tool(tmp_path):
+    """tool("my tools") writes the stand-in for a tool into that folder of tmp_path and returns its path, a
+    .bat file. tool.started(command) hands a command to subprocess the way the driver does and returns what
+    the stand-in printed: (the arguments raw, the arguments as a list) - or None when it never ran."""
+    def write_tool(folder, name="vivado.bat"):
+        (tmp_path / folder).mkdir(exist_ok=True)
+        path = tmp_path / folder / name
+        with open(str(path), "w", newline="") as f:
+            f.write(STAND_IN_BAT.format(python=sys.executable))
+        return str(path)
+
+    def started(command):
+        done = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              universal_newlines=True, cwd=str(tmp_path), timeout=60)
+        raw = [line[len("RAW:"):] for line in done.stdout.splitlines() if line.startswith("RAW:")]
+        argv = [json.loads(line[len("ARGV:"):]) for line in done.stdout.splitlines() if line.startswith("ARGV:")]
+        return (raw[0], argv[0]) if raw and argv else None
+
+    write_tool.started = started
+    return write_tool
 
 
 @pytest.fixture(scope="module")

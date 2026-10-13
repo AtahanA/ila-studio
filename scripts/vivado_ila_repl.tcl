@@ -111,12 +111,16 @@ proc ltx_hub_clock_hz {ltx} {
 proc ila_connect {url} {
     set ::CONNECT_NOTE ""
     if {[llength [get_hw_servers -quiet]] > 0} { return }
+    set fixed ""
     for {set attempt 1} {$attempt <= 2} {incr attempt} {
         say "Connecting to hw_server at $url..."
         set err ""
         if {[catch {connect_hw_server -url $url} err]} {
             set ::CONNECT_NOTE [string trim $err]
             say "connect_hw_server raised: $::CONNECT_NOTE"
+            # The repair left a cable alone that the target filter does not name (TCK_LEFT), and Vivado raises
+            # again: that cable may be the one in the way. Whoever reads the note has to learn of it.
+            if {[string match "*TCK_LEFT*" $fixed]} { append ::CONNECT_NOTE " - after the repair: $fixed" }
         }
         if {[llength [get_hw_servers -quiet]] == 0} {
             error "cannot connect to hw_server at $url - check that it is running and reachable from this PC ($::CONNECT_NOTE)"
@@ -124,10 +128,13 @@ proc ila_connect {url} {
         if {[llength [get_hw_targets -quiet]] > 0 || $attempt == 2} { break }
         if {![string match "*bad enum*" $::CONNECT_NOTE]} { break }
         say "the cable runs at a TCK frequency Vivado cannot represent; resetting it through xsdb..."
-        set fixed [jtag_reset_cable_freq $url]
+        set fixed [jtag_reset_cable_freq $url $::TARGET_FILTER]
         say "xsdb: $fixed"
         if {![string match "*TCK_RESET*" $fixed]} {
-            error "the JTAG cable runs at a TCK frequency Vivado cannot represent ($::CONNECT_NOTE) and it could not be reset: $fixed. Reset it by hand in xsdb/xsct: connect -url tcp:$url; jtag targets 1; jtag frequency 10000000"
+            # the cable to reset by hand: the first one, or the one that was left alone for the target filter
+            set which 1
+            regexp {TCK_LEFT cable ([0-9]+)} $fixed -> which
+            error "the JTAG cable runs at a TCK frequency Vivado cannot represent ($::CONNECT_NOTE) and it could not be reset: $fixed. Reset it by hand in xsdb/xsct: connect -url tcp:$url; jtag targets $which; jtag frequency 10000000"
         }
         catch { disconnect_hw_server }
         set ::CONNECT_NOTE ""
@@ -135,10 +142,16 @@ proc ila_connect {url} {
     say "Connected to hw_server [get_hw_servers -quiet]"
 }
 
-# Put every cable of the server whose TCK frequency is not one of its own listed values onto a listed value it
-# can produce exactly (10 MHz first: the default of the Xilinx cables). Runs xsdb from the Vivado installation.
-# Returns xsdb's output: one "TCK_RESET <old> -> <new>" line per cable that was changed.
-proc jtag_reset_cable_freq {url} {
+# Put a cable whose TCK frequency is not one of its own listed values onto a listed value it can produce exactly
+# (10 MHz first: the default of the Xilinx cables). Runs xsdb from the Vivado installation.
+# target_filter: the filter of the session for its JTAG target. Only the cables it fits are looked at and changed.
+# A hw_server may serve several cables, and another one may sit at such a frequency because the debug session of
+# somebody else holds it there: its clock is not this session's to change. With "*", and with a filter that fits
+# no cable the way xsdb names them, every cable of the server is looked at - there is then no telling which one
+# the session means.
+# Returns xsdb's output, a line per cable: "TCK_RESET <old> -> <new>" for one that was changed, "TCK_OK <hz>" for
+# one that needed nothing, "TCK_LEFT ..." for one that was not looked at.
+proc jtag_reset_cable_freq {url {target_filter *}} {
     set xsdb ""
     foreach dir [list [file dirname [info nameofexecutable]] \
                       [expr {[info exists ::env(XILINX_VIVADO)] ? [file join $::env(XILINX_VIVADO) bin] : ""}]] {
@@ -154,6 +167,8 @@ proc jtag_reset_cable_freq {url} {
     # the address as one Tcl word (list): written as it stands, an IPv6 address in brackets - or any text with a
     # bracket, a semicolon or a space in it - would be run by xsdb as part of this script
     puts $f "if {\[catch {connect -url [list tcp:$url]} e\]} { puts \"xsdb connect failed: \$e\"; exit 1 }"
+    puts $f "set url [list $url]"
+    puts $f "set filter [list $target_filter]"
     puts $f {
         proc fix_cable {id} {
             jtag targets $id
@@ -167,9 +182,47 @@ proc jtag_reset_cable_freq {url} {
             }
             return "TCK_STUCK $cur"
         }
+        # Whether the target filter fits a cable. The filter is a glob for the name Vivado gives a JTAG target,
+        # <server>/xilinx_tcf/<maker>/<serial>. xsdb knows no such name: it calls a cable "<maker> <product>
+        # <serial>" and reports properties of its own. So the filter is held against the name Vivado would make
+        # of maker and serial, and against every text xsdb reports for the cable.
+        proc cable_fits {t url filter} {
+            set name [expr {[dict exists $t name] ? [dict get $t name] : ""}]
+            set maker [lindex [split $name] 0]
+            set serial [lindex [split $name] end]
+            foreach {key var} {jtag_cable_manufacturer maker jtag_cable_serial serial} {
+                if {[dict exists $t $key] && [dict get $t $key] ne ""} { set $var [dict get $t $key] }
+            }
+            set texts [list "$url/xilinx_tcf/$maker/$serial"]
+            foreach v [dict values $t] {
+                if {![string is integer -strict $v]} { lappend texts $v }      ;# not a level, an id or a flag
+            }
+            foreach text $texts {
+                if {[string match -nocase $filter $text]} { return 1 }
+            }
+            return 0
+        }
+        set cables {}
         foreach t [jtag targets -target-properties] {
-            if {[dict get $t level] != 0} { continue }
-            if {[catch {fix_cable [dict get $t node_id]} res]} { set res "xsdb: $res" }
+            if {[dict get $t level] == 0} { lappend cables $t }
+        }
+        set mine {}
+        if {$filter ne "" && $filter ne "*"} {
+            foreach t $cables {
+                if {[cable_fits $t $url $filter]} { lappend mine [dict get $t node_id] }
+            }
+            if {[llength $mine] == 0} {
+                puts "TCK_FILTER the target filter $filter fits no cable as xsdb names them: every cable is looked at"
+            }
+        }
+        foreach t $cables {
+            set id [dict get $t node_id]
+            if {[llength $mine] > 0 && [lsearch -exact $mine $id] < 0} {
+                set name [expr {[dict exists $t name] ? [dict get $t name] : ""}]
+                puts "TCK_LEFT cable $id ($name): not the one the target filter names, not looked at"
+                continue
+            }
+            if {[catch {fix_cable $id} res]} { set res "xsdb: $res" }
             puts $res
         }
         catch { disconnect }
@@ -178,7 +231,23 @@ proc jtag_reset_cable_freq {url} {
     close $f
     set out ""
     if {[info exists ::tcl_platform(platform)] && $::tcl_platform(platform) eq "windows"} {
-        catch { exec cmd /c [file nativename $xsdb] [file nativename $script] 2>@1 } out
+        set bat [file nativename $xsdb]
+        set arg [file nativename $script]
+        # exec puts quotes around a word with a blank, and cmd takes the quotes off a line that has two such
+        # words: it then looks for a program called "C:\Program". And a word without a blank gets no quotes,
+        # so that a "&" in it ends the command. Where the line could not work for one of these reasons the
+        # script is named without its folder, from inside that folder; every other line is the one it was.
+        # Not helped by this: a "&" in the path of xsdb itself, which is the command of the line. The repair
+        # then returns what cmd said about it, and ila_connect the xsdb commands to reset the cable by hand.
+        if {[regexp {\s} $arg] ? [regexp {\s} $bat] : [regexp {[&|<>^]} $arg]} {
+            set here [pwd]
+            if {![catch {cd $tmpdir} out]} {
+                catch { exec cmd /c $bat [file tail $script] 2>@1 } out
+                cd $here
+            }
+        } else {
+            catch { exec cmd /c $bat $arg 2>@1 } out
+        }
     } else {
         catch { exec $xsdb $script 2>@1 } out
     }

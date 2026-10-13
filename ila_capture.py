@@ -231,8 +231,8 @@ class Repl:
         self.lock = threading.Lock()
         self.writing = None
         # errors="backslashreplace": one byte outside the code page in Vivado's output must not kill the reader
-        self.p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                  text=True, errors="backslashreplace", bufsize=1, cwd=HERE,
+        self.p = subprocess.Popen(cmd_line(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True, errors="backslashreplace", bufsize=1, cwd=HERE,
                                   creationflags=NO_WINDOW)
         self.q = queue.Queue()
         threading.Thread(target=self._reader, daemon=True).start()
@@ -314,6 +314,36 @@ class Repl:
         if check and rc != 0:
             raise RuntimeError(f"{self.name}: '{tcl}' failed: {res}")
         return res
+
+    def resync(self, timeout=60):
+        """Make the next command get its own answer. A command that was cut short while its answer was awaited
+        (Ctrl-C) leaves that answer unread: it would be handed to the next command, whose own answer goes to the
+        one after it, and whoever then decides by an answer decides by the wrong one. A line of plain Tcl whose
+        answer nothing else gives is sent, and everything that comes before that answer is read off."""
+        mark = f"ila-sync-{os.getpid()}-{time.monotonic_ns()}"
+        with self.lock:
+            if self.dead:
+                raise RuntimeError(f"{self.name} is no longer usable (it timed out or exited)")
+            try:
+                self.p.stdin.write(f"format {mark}\n"); self.p.stdin.flush()
+            except OSError as e:
+                self.dead = True
+                raise RuntimeError(f"{self.name} is no longer running ({e})") from None
+            deadline, own = time.monotonic() + timeout, False
+            while True:
+                try:
+                    line = self._line(deadline)
+                except queue.Empty:
+                    self.dead = True
+                    raise RuntimeError(f"{self.name} did not answer within {timeout} s") from None
+                if line is None:
+                    self.dead = True
+                    raise RuntimeError(f"{self.name} exited")
+                own = own or line == "@@RES " + mark
+                if own and line.startswith("@@END"):
+                    return
+                if not own and not line.startswith(("@@RC ", "@@END")):
+                    self.log(f"[{self.name}] {line}", quiet=True)    # what was printed, and the answer nobody read
 
     def settle(self, timeout=660):
         """Wait until the command another thread is running here has answered (the file of the last window is
@@ -489,9 +519,45 @@ def resolve_tcl(path):
 
 
 def launch(exe, *args):
-    """Windows needs cmd /c for the .bat wrappers Xilinx ships; elsewhere the executable is run directly."""
+    """Windows needs cmd /c for the .bat wrappers Xilinx ships; elsewhere the executable is run directly. The
+    list is the one the logs show; what subprocess is given to start it is cmd_line() of it."""
     argv = [exe, *args]
     return ["cmd", "/c"] + argv if os.name == "nt" else argv
+
+
+# What makes a word of a line for cmd need quotes: a blank, and the characters cmd reads as more than text. The
+# second lot only ends the name of the command, the first word. A word without any of them is written as it
+# stands: the wrappers compare their arguments as text, and "-mode" in quotes is not -mode to them.
+CMD_QUOTED = re.compile(r"[\s&|<>^]")
+CMD_QUOTED_FIRST = re.compile(r"[(),;=]")
+CMD_REFUSED = (('"', "a double quote"), ("%", "a percent sign"))
+
+
+def cmd_line(argv):
+    """What subprocess is handed for a list that launch() made: elsewhere the list itself, on Windows one string.
+    The line has to be written for cmd, and subprocess does not do that: it quotes a word that holds a blank and
+    no other. cmd then takes the quotes off a line that has two such words (a tool path and a script path with a
+    blank each) and looks for a program called "C:\\Program"; and a "&" in a word without a blank ends the
+    command (a program folder D:\\R&D\\...). Here every word that needs quotes gets them, and the whole line a
+    pair of its own behind /s, which is then the one pair cmd takes off. /d: no AutoRun command of the registry
+    runs first. A line that started a tool before is, between those outer quotes, the line it was.
+    RuntimeError for a word with a double quote or a percent sign: neither can be written for cmd so that it
+    stays what it is - and a wrapper that hands its arguments on with "call" reads a "%" once more even where
+    cmd left it alone."""
+    if os.name != "nt" or argv[:2] != ["cmd", "/c"]:
+        return argv
+    words = []
+    for i, word in enumerate(argv[2:]):
+        for char, name in CMD_REFUSED:
+            if char in word:
+                raise RuntimeError(f"{os.path.basename(argv[2])} cannot be started: {word} holds {name}, which "
+                                   f"cmd.exe does not pass on as it is written. The program folder, the path of "
+                                   f"a tool or of a Tcl script, or the address has to do without it")
+        if not word or CMD_QUOTED.search(word) or (i == 0 and CMD_QUOTED_FIRST.search(word)):
+            # as subprocess writes a quoted word: a backslash at its end is doubled, or it would take the quote
+            word = '"' + word + "\\" * (len(word) - len(word.rstrip("\\"))) + '"'
+        words.append(word)
+    return '"{}" /d /s /c "{}"'.format(os.environ.get("ComSpec") or "cmd.exe", " ".join(words))
 
 
 def expand(paths):
@@ -1393,10 +1459,12 @@ class Session:
 
     def open_xsct(self):
         hw, t = self.prof["hardware"], self.prof["tools"]
-        argv = launch(t["xsct"], os.path.join(HERE, "xsct_repl.tcl"), f"tcp:{hw['url']}")
+        self.xs = Repl(launch(t["xsct"], os.path.join(HERE, "xsct_repl.tcl"), f"tcp:{hw['url']}"), "xsct", self.log)
         if hw.get("core_filter"):
-            argv.append(hw["core_filter"])
-        self.xs = Repl(argv, "xsct", self.log)
+            # As its first command, not as an argument of the script: a filter of xsct has quotes of its own
+            # (name =~ "*Cortex-A9*#0*") and may hold "&&", and neither can be written on a line for cmd. The
+            # script looks at the filter only when a command selects the core.
+            self.xs.cmd(f"set ::CORE_FILTER {tcl_word(str(hw['core_filter']))}", timeout=60)
 
     def capture(self, name, meta, armed=False, finish=None):
         """One capture: collect an already armed ILA (armed=True) or run a complete capture, then compute
@@ -1810,6 +1878,7 @@ def cmd_hook(args, prof):
           f"{h['info_symbol']} @0x{info:08x} ({n_words} words), mode {h.get('mode')}, output {s.out}")
     done, last_seq, run, pending = 0, None, 1, None
     failed = False                           # an error ended the run: the exit code has to say so
+    planting = False                         # --plant got as far as xsct: there may be a breakpoint to take away
     t_end = time.time() + args.minutes * 60
     resume_at = {int(x, 0) for x in args.resume_at}
     try:
@@ -1828,9 +1897,18 @@ def cmd_hook(args, prof):
             pc = int(m.group(1), 16)
             if not at_hook(pc, hook, hook_size, calls):
                 if args.plant:
-                    s.xs.cmd(f"add_bp 0x{hook:08x}", timeout=60, check=False)
-                    args.plant = False
-                    s.log(f"planted a hardware breakpoint at 0x{hook:08x} while halted at 0x{pc:08x}")
+                    # set before the command is sent: a Ctrl-C while its answer is awaited leaves a breakpoint
+                    # nobody here knows of - the Tcl side does, and the end of the run asks it (del_bp)
+                    args.plant, planting = False, True
+                    try:
+                        bp = s.xs.cmd(f"add_bp 0x{hook:08x}", timeout=60)
+                        s.log(f"planted a hardware breakpoint at 0x{hook:08x} while halted at 0x{pc:08x} "
+                              f"(breakpoint {bp} of xsct)")
+                    except RuntimeError as e:
+                        if s.xs.dead:
+                            raise
+                        s.log(f"NO breakpoint was planted at 0x{hook:08x}: {str(e).split('failed: ', 1)[-1]} - "
+                              f"the core only halts at the hook where a debugger has a breakpoint")
                 if pc in resume_at:
                     s.log(f"halted at 0x{pc:08x} (--resume-at): resuming")
                     s.xs.cmd("resume", timeout=60)
@@ -1869,7 +1947,8 @@ def cmd_hook(args, prof):
                 if ended:
                     s.log("end marker reached")
                     pending = None
-                    s.xs.cmd("resume", timeout=60)
+                    if not planting:             # a planted breakpoint goes first: the end of the run resumes
+                        s.xs.cmd("resume", timeout=60)
                     break
                 s.viv.cmd("ila_arm " + tcl_trigger(args.trigger or cap["trigger"]) + " " +
                           str(pos) + " " + capture_words(cap)[0], timeout=120)
@@ -1879,6 +1958,11 @@ def cmd_hook(args, prof):
                     break
                 s.capture(h["name_template"].format(run=run, **fields), fields)
                 done += 1
+            if planting and (done >= args.count or time.time() >= t_end):
+                # The run is over, and the core is halted at the breakpoint this run planted. Resumed here, it
+                # would halt there once more before the breakpoint is gone: the end of the run takes the
+                # breakpoint away first and resumes the core then.
+                break
             s.xs.cmd("resume", timeout=60)
         s.log(f"finished: {done} captures in {s.out}")
     except KeyboardInterrupt:
@@ -1890,13 +1974,31 @@ def cmd_hook(args, prof):
         # never leave the target halted at the hook: it would stall the system under test
         try:
             if s.xs:
+                s.xs.resync()                    # Ctrl-C may have cut a command short: the answers must fit again
+                if planting:
+                    # The breakpoint goes first, before the core is looked at and resumed for the last time. As
+                    # long as it is there the core halts at every call of the hook, and from here on nobody
+                    # resumes it: the tools are closed next, Vivado first, which takes seconds, xsct last.
+                    try:
+                        gone = s.xs.cmd("del_bp", timeout=60)
+                        if gone:
+                            s.log(f"removed the hardware breakpoint at 0x{hook:08x} (breakpoint {gone} of xsct)")
+                    except RuntimeError as e:
+                        if s.xs.dead:
+                            raise
+                        s.log(f"WARNING the hardware breakpoint at 0x{hook:08x} could NOT be removed "
+                              f"({str(e).split('failed: ', 1)[-1]}): the core may halt at the hook once more "
+                              f"and stay halted - look at it with a debugger, or reset the target")
+                    planting = False             # said, one way or the other
                 st = s.xs.cmd("core_state", timeout=60, check=False)
                 m = HALT_RE.search(st)
                 if m and at_hook(int(m.group(1), 16), hook, hook_size, calls):
                     s.xs.cmd("resume", timeout=60, check=False)
                     s.log("the core was halted at the hook: resumed")
         except Exception as e:
-            s.log(f"could not check/resume the core: {e}")
+            s.log(f"could not check/resume the core: {e}" + (
+                f" - and the hardware breakpoint planted at 0x{hook:08x} may still be set: look at the core with "
+                f"a debugger, or reset the target" if planting else ""))
         s.close()
     return 1 if failed else 0
 

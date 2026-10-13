@@ -1117,8 +1117,10 @@ def cmd_run_tcl(a):
         argv = ic.launch(ic.resolve_vivado(prof["tools"]["vivado"]), "-mode", "batch", "-nolog", "-nojournal",
                          "-notrace", "-source", tcl)
         bridge_log(f"---- run-tcl: {' '.join(argv)}")
-        p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True, errors="backslashreplace", cwd=HERE, creationflags=NO_WINDOW)
+        # cmd_line: the line as cmd needs it written, or the refusal of a path that cannot be written for it
+        p = subprocess.Popen(ic.cmd_line(argv), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True, errors="backslashreplace", cwd=HERE,
+                             creationflags=NO_WINDOW)
         out = queue.Queue()
 
         def reader():
