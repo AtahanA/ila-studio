@@ -346,7 +346,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
     <div className="card waveform-card">
       <div className="card-header">
         <div className="card-title">
-          <Activity size={18} className="text-accent" />
+          <Activity size={18} />
           <h3>Interactive Logic Analyzer Waveform</h3>
         </div>
 
@@ -463,21 +463,21 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
       {/* Footer Info Bar */}
       {waveform && (
         <div className="waveform-footer">
-          <span className="footer-item">
+          <span>
             <strong>Buffer Depth:</strong> {waveform.totalSamples.toLocaleString()} samples
             {waveform.step > 1 ? ` (every ${waveform.step}th shown)` : ""}
           </span>
           {triggerPosition !== null && (
-            <span className="footer-item">
+            <span>
               <strong>Trigger at:</strong> sample {triggerPosition}
             </span>
           )}
           {hoverIndex !== null && (
-            <span className="footer-item highlight">
+            <span className="highlight">
               <strong>Sample Index:</strong> {waveform.sampleIndices[hoverIndex] ?? hoverIndex}
             </span>
           )}
-          <span className="footer-item" title={waveform.filePath}>
+          <span title={waveform.filePath}>
             <strong>Source:</strong> {waveform.filePath}
           </span>
         </div>

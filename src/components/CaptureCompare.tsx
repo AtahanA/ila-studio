@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Layers, Search } from "lucide-react";
 import { ComparedCapture, WaveformResult } from "../types";
+import { useDismiss } from "../dismiss";
 import { CaptureItem, captureTime } from "./CaptureNavigator";
 
 /** So many captures can be laid over the one on screen: a plot has eight curve colours, and each is a file in memory. */
@@ -74,27 +75,11 @@ export const CaptureCompare: React.FC<CaptureCompareProps> = ({ items, chosen, o
   const buttonRef = useRef<HTMLButtonElement | null>(null);
 
   // closes on a click elsewhere and on Escape; that click must not also place a cursor in a plot
-  useEffect(() => {
-    if (!open) return;
-    const outside = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        e.stopPropagation();
-      }
-    };
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // the menu goes, and with it whatever had the focus in it: the button takes it, not the top of the page
-      if (rootRef.current?.contains(document.activeElement)) buttonRef.current?.focus();
-      setOpen(false);
-    };
-    window.addEventListener("pointerdown", outside, true);
-    window.addEventListener("keydown", key);
-    return () => {
-      window.removeEventListener("pointerdown", outside, true);
-      window.removeEventListener("keydown", key);
-    };
-  }, [open]);
+  useDismiss(open, rootRef, (by) => {
+    // on Escape the menu goes, and with it whatever had the focus in it: the button takes it, not the top of the page
+    if (by === "escape" && rootRef.current?.contains(document.activeElement)) buttonRef.current?.focus();
+    setOpen(false);
+  });
 
   useEffect(() => {
     if (items.length === 0) setOpen(false);
@@ -155,7 +140,7 @@ export const CaptureCompare: React.FC<CaptureCompareProps> = ({ items, chosen, o
     <span className="capture-compare" ref={rootRef}>
       <button
         ref={buttonRef}
-        className={`btn btn-secondary btn-sm capture-compare-btn ${open || chosen.length > 0 ? "on" : ""}`}
+        className={`btn btn-secondary btn-small capture-compare-btn ${open || chosen.length > 0 ? "on" : ""}`}
         aria-haspopup="true"
         aria-expanded={open}
         // the count is a bare digit next to the word: read out, the two would run into one
@@ -205,7 +190,7 @@ export const CaptureCompare: React.FC<CaptureCompareProps> = ({ items, chosen, o
           </div>
           {withFilter && (
             <div className="search-box capture-compare-filter">
-              <Search size={13} className="search-icon" />
+              <Search size={13} />
               <input
                 className="search-input"
                 aria-label="Filter the captures by name or number"

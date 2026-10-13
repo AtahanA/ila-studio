@@ -9,7 +9,7 @@ import {
   TriggerOperator1Bit,
   TriggerOperatorMultiBit,
 } from "../types";
-import { probeKey, ruleTarget, ruleTrigger } from "../trigger";
+import { probeKey, ruleForProbe, ruleTarget, ruleTrigger } from "../trigger";
 import {
   Zap,
   Clock,
@@ -90,17 +90,7 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
       return;
     }
 
-    onChangeConfig({
-      activeRule: {
-        probeName: probe.name,
-        probeFullName: probeKey(probe),
-        isBus: probe.isBus,
-        width: probe.width,
-        op1Bit: probe.isBus ? undefined : "R",
-        opMultiBit: probe.isBus ? "hex" : undefined,
-        value: probe.isBus ? "0" : undefined,
-      },
-    });
+    onChangeConfig({ activeRule: ruleForProbe(probe) });
   };
 
   const handle1BitOpChange = (op: TriggerOperator1Bit) => {
@@ -137,7 +127,7 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
     <div className="card trigger-card">
       <div className="card-header">
         <div className="card-title">
-          <Crosshair size={18} className="text-accent" />
+          <Crosshair size={18} />
           <h3>Trigger Rules & Capture Mode</h3>
         </div>
         <span className="badge-chip">FPGA Trigger Engine</span>

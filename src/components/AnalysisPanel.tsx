@@ -1534,7 +1534,7 @@ const SignalList = React.memo<SignalListProps>(function SignalList({ waveform, c
     <div className="card analysis-signals">
       <div className="card-header">
         <div className="card-title">
-          <Activity size={16} className="text-accent" />
+          <Activity size={16} />
           <h3 title={hiddenNote || undefined}>{title}</h3>
         </div>
         <button
@@ -1560,7 +1560,7 @@ const SignalList = React.memo<SignalListProps>(function SignalList({ waveform, c
       </div>
       <div className="analysis-signals-search">
         <div className="search-box">
-          <Search size={13} className="search-icon" />
+          <Search size={13} />
           <input
             className="search-input"
             aria-label="Filter the signals"
@@ -2106,7 +2106,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
   const windowButton = onPopOut ? (
     <button
-      className="btn btn-secondary btn-sm"
+      className="btn btn-secondary btn-small"
       onClick={() => {
         writeHandover.current();
         onPopOut();
@@ -2118,7 +2118,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
     </button>
   ) : onDock ? (
     <button
-      className="btn btn-secondary btn-sm"
+      className="btn btn-secondary btn-small"
       onClick={() => {
         writeHandover.current();
         onDock();
@@ -2158,16 +2158,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       <div className="analysis-main">
         <div className="card analysis-toolbar">
           <div className="analysis-toolbar-main">
-          <button className="btn btn-secondary btn-sm" onClick={addPane}>
+          <button className="btn btn-secondary btn-small" onClick={addPane}>
             <Plus size={13} />
             <span>Add plot</span>
           </button>
-          <button className="btn btn-secondary btn-sm" onClick={resetView} title="Show the whole capture in every plot (double-click in a plot resets that plot)">
+          <button className="btn btn-secondary btn-small" onClick={resetView} title="Show the whole capture in every plot (double-click in a plot resets that plot)">
             <Maximize2 size={13} />
             <span>Reset view</span>
           </button>
           <button
-            className={`btn btn-secondary btn-sm ${linkX ? "on" : ""}`}
+            className={`btn btn-secondary btn-small ${linkX ? "on" : ""}`}
             aria-pressed={linkX}
             onClick={toggleLink}
             title={

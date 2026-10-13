@@ -4,6 +4,7 @@
 import React, { useState, useMemo } from "react";
 import { IlaCore, IlaProbe, PROBE_FORMATS, ProbeFormat, TriggerRule } from "../types";
 import { probeKey } from "../trigger";
+import { shortCore } from "../names";
 import { Search, Sliders, Hash, ToggleLeft, ArrowUpRight, Check, Filter, X } from "lucide-react";
 
 interface ProbeSelectorProps {
@@ -93,10 +94,6 @@ export const ProbeSelector: React.FC<ProbeSelectorProps> = ({
   // "not on this core" is said only when no probe of this core has the name at all - not when the filter
   // buttons merely hide the ones that have
   const hereAtAll = useMemo(() => !!term && probes.some(named), [probes, term]);
-  const shortCore = (name: string) => {
-    const leaf = name.split("/").pop() || name;
-    return leaf.includes(".") ? leaf.slice(leaf.lastIndexOf(".") + 1) : leaf;
-  };
   // the column that names the core is of use only where the list holds probes of more than one
   const coreColumn = new Set(probes.map((p) => p.core)).size > 1;
 
@@ -104,7 +101,7 @@ export const ProbeSelector: React.FC<ProbeSelectorProps> = ({
     <div className="card probes-card">
       <div className="card-header">
         <div className="card-title">
-          <Sliders size={18} className="text-accent" />
+          <Sliders size={18} />
           <h3>ILA Parameters & Probes ({probes.length})</h3>
         </div>
 
@@ -122,7 +119,7 @@ export const ProbeSelector: React.FC<ProbeSelectorProps> = ({
       <div className="probes-toolbar">
         {/* Search */}
         <div className="search-box">
-          <Search size={14} className="search-icon" />
+          <Search size={14} />
           <input
             type="text"
             className="search-input"
@@ -242,7 +239,6 @@ export const ProbeSelector: React.FC<ProbeSelectorProps> = ({
                     <td>
                       <input
                         type="checkbox"
-                        className="checkbox-custom"
                         checked={isSelectedPlot}
                         onChange={() => onToggleWaveformSignal(probeKey(probe))}
                         // which probe the box belongs to: the tooltip is the same in every row
@@ -284,9 +280,8 @@ export const ProbeSelector: React.FC<ProbeSelectorProps> = ({
                     </td>
                     {coreColumn && (
                       <td>
-                        <span className="core-label" title={probe.core}>
-                          {probe.core.split("/").pop()}
-                        </span>
+                        {/* named as its chip and the hint above name it */}
+                        <span title={probe.core}>{shortCore(probe.core)}</span>
                       </td>
                     )}
                     <td style={{ textAlign: "right" }}>

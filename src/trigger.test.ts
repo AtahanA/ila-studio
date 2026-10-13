@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Atahan Aggunlu
 
 import { describe, expect, it } from "vitest";
-import { compareValue, probeKey, ruleTarget, ruleTrigger, shownSignals } from "./trigger";
+import { compareValue, probeKey, ruleForProbe, ruleTarget, ruleTrigger, shownSignals } from "./trigger";
 import type { TriggerRule } from "./types";
 
 const bit = (more: Partial<TriggerRule> = {}): TriggerRule => ({ probeName: "rx_valid", isBus: false, width: 1, ...more });
@@ -98,7 +98,11 @@ describe("compareValue", () => {
 
   it("takes hex when the rule names no radix", () => {
     expect(compareValue(bus({ value: "2a" }))).toBe("eq14'h002a");
-    expect(compareValue(bus({ opMultiBit: "custom", value: "2a" }))).toBe("eq14'h002a");
+  });
+
+  // no button sets it: only a rule written by hand into a profile compares with X, and it is sent as written
+  it("passes on a compare with X, which does not care", () => {
+    expect(compareValue(bit({ op1Bit: "X" }))).toBe("eq1'bX");
   });
 
   it("reads an empty value as zero", () => {
@@ -188,6 +192,23 @@ describe("ruleTarget", () => {
   it("gives the trigger of a probe that shares its leaf name with another", () => {
     const rule = bit({ probeName: "valid", probeFullName: "u_b/valid" });
     expect(ruleTrigger(rule, ruleTarget(rule, probes))).toBe("u_b/valid eq1'bR");
+  });
+});
+
+describe("ruleForProbe", () => {
+  it("starts a single bit with a rising edge, under its hierarchical name", () => {
+    const rule = ruleForProbe({ name: "valid", fullName: "u_b/valid", isBus: false, width: 1 });
+    expect(rule).toEqual({ probeName: "valid", probeFullName: "u_b/valid", isBus: false, width: 1, op1Bit: "R" });
+    expect(rule.opMultiBit).toBeUndefined();
+    expect(rule.value).toBeUndefined();
+    expect(ruleTrigger(rule, ruleTarget(rule, []))).toBe("u_b/valid eq1'bR");
+  });
+
+  it("starts a bus with the value 0 in hex, named without its range", () => {
+    const rule = ruleForProbe({ name: "adc_data", fullName: "u_top/adc_data[13:0]", isBus: true, width: 14 });
+    expect(rule).toEqual({ probeName: "adc_data", probeFullName: "u_top/adc_data", isBus: true, width: 14, opMultiBit: "hex", value: "0" });
+    expect(rule.op1Bit).toBeUndefined();
+    expect(ruleTrigger(rule, ruleTarget(rule, []))).toBe("u_top/adc_data eq14'h0000");
   });
 });
 

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Atahan Aggunlu
 
 // A configuration of the capture page as a profile file, and back. Pure functions: no DOM, no React.
+import { pathKey } from "./names";
 import { CaptureConfig, CaptureMode, ProbeFormat, TriggerRule } from "./types";
 
 /**
@@ -56,11 +57,10 @@ const OWN_NOTE = new RegExp(
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
 const section = (base: Json | undefined, key: string): Json => (base && isObject(base[key]) ? { ...(base[key] as Json) } : {});
-const path = (p: string) => p.trim().replace(/\\/g, "/").toLowerCase();
 /** one probe file, however its path was written */
-export const sameFile = (a: unknown, b: string) => typeof a === "string" && path(a) === path(b);
+export const sameFile = (a: unknown, b: string) => typeof a === "string" && pathKey(a) === pathKey(b);
 /** ... and a file of the same name in whatever folder: the probe file of a design that was moved, or built again */
-export const sameFileName = (a: unknown, b: string) => typeof a === "string" && a.trim() !== "" && path(a).split("/").pop() === path(b).split("/").pop();
+export const sameFileName = (a: unknown, b: string) => typeof a === "string" && a.trim() !== "" && pathKey(a).split("/").pop() === pathKey(b).split("/").pop();
 
 /**
  * The profile a page is saved as. `base` is the profile the page was started from, if any: what it holds beyond
@@ -157,10 +157,12 @@ function ruleOf(v: unknown): TriggerRule | null {
   const rule: TriggerRule = { probeName: v.probeName, isBus, width };
   if (typeof v.probeFullName === "string" && v.probeFullName !== "") rule.probeFullName = v.probeFullName;
   if (isBus) {
-    rule.opMultiBit = v.opMultiBit === "dec" || v.opMultiBit === "bin" || v.opMultiBit === "custom" ? v.opMultiBit : "hex";
+    // any other radix is hex: that is how such a rule was always sent, and now the card shows it as that too
+    rule.opMultiBit = v.opMultiBit === "dec" || v.opMultiBit === "bin" ? v.opMultiBit : "hex";
     rule.value = typeof v.value === "string" ? v.value : "0";
-    if (typeof v.rawExpression === "string") rule.rawExpression = v.rawExpression;
   } else {
+    // ("X", do not care, is kept although no button sets it: it reaches the trigger as written, and taking it
+    // for a rising edge would change what a profile that holds it sends - see types.ts)
     rule.op1Bit = v.op1Bit === "1" || v.op1Bit === "0" || v.op1Bit === "F" || v.op1Bit === "B" || v.op1Bit === "X" ? v.op1Bit : "R";
   }
   return rule;

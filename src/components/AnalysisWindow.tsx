@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
-import { WaveformResult } from "../types";
+import { VIEWER_MAX_SAMPLES, WaveformResult } from "../types";
 import { AnalysisPanel } from "./AnalysisPanel";
 import { CaptureImport } from "./CaptureImport";
 import { CaptureCompare, comparisonChange, useComparedCaptures } from "./CaptureCompare";
@@ -57,7 +57,7 @@ export function AnalysisWindow() {
   // The main window owns the choice of compared captures; this window reads their files itself. Every sync
   // names the choice again: it is taken over only when it has changed, so nothing is read or redrawn for it.
   const [compared, setCompared] = useState<string[]>([]);
-  const [maxSamples, setMaxSamples] = useState(131072);
+  const [maxSamples, setMaxSamples] = useState(VIEWER_MAX_SAMPLES);
   // A capture that is on screen and compared is parsed once and is one object for both (see load below).
   const shown = useRef<WaveformResult | null>(null);
   const comparison = useComparedCaptures(compared, captures, maxSamples, (path) =>

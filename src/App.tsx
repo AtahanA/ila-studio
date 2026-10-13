@@ -13,11 +13,11 @@ import {
   CaptureConfig,
   HwResult,
   HwSession,
-  PROBE_FORMATS,
   ProbeFormat,
   StopAnswer,
+  VIEWER_MAX_SAMPLES,
 } from "./types";
-import { probeKey, ruleTarget, ruleTrigger } from "./trigger";
+import { probeKey, ruleForProbe, ruleTarget, ruleTrigger } from "./trigger";
 import {
   SavedSettings,
   beyondThePage,
@@ -30,7 +30,7 @@ import {
   sameFileName,
   settingsOf,
 } from "./profile";
-import { captureLabel } from "./names";
+import { captureLabel, cleanFormats, pathKey, shortCore, statusFromLogLine } from "./names";
 import { Header } from "./components/Header";
 import { SaveAnswer, SaveProfileDialog } from "./components/SaveProfileDialog";
 import { HardwareConfig } from "./components/HardwareConfig";
@@ -58,18 +58,6 @@ const SETTINGS_KEY = "ila-studio-settings-v1";
 const FORMATS_KEY = "ila-studio-probe-formats-v1";
 type ProbeFormats = Record<string, ProbeFormat>;
 
-/** the formats that are not the default, of the entries that name a format this tool writes */
-function cleanFormats(given: unknown): ProbeFormats {
-  const out: ProbeFormats = {};
-  if (given && typeof given === "object") {
-    for (const [name, value] of Object.entries(given as Record<string, unknown>)) {
-      const format = String(value).toLowerCase() as ProbeFormat;
-      if (PROBE_FORMATS.includes(format) && format !== "unsigned") out[name.replace(/\[\d+:\d+\]$/, "")] = format;
-    }
-  }
-  return out;
-}
-
 function storedFormats(): Record<string, ProbeFormats> {
   try {
     const all = JSON.parse(localStorage.getItem(FORMATS_KEY) || "{}");
@@ -79,8 +67,8 @@ function storedFormats(): Record<string, ProbeFormats> {
   }
 }
 
-/** one probe file, however its path was typed */
-const formatsKey = (ltx: string) => ltx.trim().replace(/\\/g, "/").toLowerCase();
+/** one probe file, however its path was typed: what its formats are stored under, and what tells it from another */
+const formatsKey = pathKey;
 
 /** What scan_capture_paths answers: the capture files among what was named for an import. */
 interface CaptureScan {
@@ -124,9 +112,6 @@ interface CaptureEntry extends CaptureItem {
   unread?: boolean;
 }
 
-/** One file, however its path is spelled: Windows takes either slash and any case. */
-const pathKey = (path: string) => path.replace(/\//g, "\\").toLowerCase();
-
 const MAX_LIVE_LOG_LINES = 3000;
 // The list of captures one can step through. A constant capture left running adds one every few seconds: beyond
 // this many the oldest leave the list (their files stay on disk, and "Open File" brings one back). Every entry
@@ -137,23 +122,9 @@ const MAX_CAPTURE_HISTORY = 4000;
 // Parsed captures kept in memory so that stepping back and forth does not read the files again: this many
 // values in all (about six captures of 16384 samples and 60 signals).
 const WAVE_CACHE_VALUES = 6_000_000;
-// Up to this many samples the viewer and the analysis plots get every sample (they draw per pixel column, so
-// nothing is lost on the way to the screen either): measurements and spectra are then made on the real data.
-// It covers the deepest ILA buffer; anything longer is thinned and the viewer's footer says so.
-const VIEWER_MAX_SAMPLES = 131072;
 // A second click that lands on the button right after it turned into "Stop" is the tail of a double-click.
 const STOP_GUARD_MS = 700;
 const NOTHING_COMPARED: string[] = [];
-
-/** What a progress line of the driver should put into the status bar, or null for Vivado's own chatter. */
-function statusFromLogLine(line: string): string | null {
-  const text = line.replace(/^\d\d:\d\d:\d\d\s+/, "");
-  const vivado = text.match(/^\[vivado[^\]]*\]\s*(.*)$/);
-  if (!vivado) return text.trim() || null;
-  const body = vivado[1];
-  if (body.startsWith("[ILA_REPL]")) return body.replace("[ILA_REPL]", "").trim() || null;
-  return /^(ERROR|WARNING)/.test(body) ? body : null;
-}
 
 export function App() {
   // Profiles
@@ -730,10 +701,7 @@ export function App() {
     [coresKnown, probes, selectedCore],
   );
   const coreProbeCounts = useMemo(() => cores.map((c) => probes.filter((p) => p.core === c.name).length), [cores, probes]);
-  const coreLabel = (index: number) => {
-    const leaf = (cores[index]?.name || "").split("/").pop() || "";
-    return `[${index}] ${leaf.includes(".") ? leaf.slice(leaf.lastIndexOf(".") + 1) : leaf}`;
-  };
+  const coreLabel = (index: number) => `[${index}] ${shortCore(cores[index]?.name || "")}`;
   /** The core that is wanted, for a list of cores that is read later: by name where the list has it, else by
    *  position (a profile gives a position). */
   /** ... kept apart from the list on screen, which may be another's for a while (the demo data): `cell` is what
@@ -1272,15 +1240,7 @@ export function App() {
   const handleSelectTriggerProbe = (probe: IlaProbe) => {
     changeCaptureConfig({
       mode: captureConfig.mode === "just_capture" ? "trigger_rule" : captureConfig.mode,
-      activeRule: {
-        probeName: probe.name,
-        probeFullName: probeKey(probe),
-        isBus: probe.isBus,
-        width: probe.width,
-        op1Bit: probe.isBus ? undefined : "R",
-        opMultiBit: probe.isBus ? "hex" : undefined,
-        value: probe.isBus ? "0" : undefined,
-      },
+      activeRule: ruleForProbe(probe),
     });
     setStatusMessage(`Selected ${probe.name} for the trigger rule.`);
   };
@@ -1467,10 +1427,10 @@ export function App() {
                   screen. Close that window to have it back in this tab.
                 </span>
                 <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                  <button className="btn btn-secondary btn-sm" onClick={handlePopOutAnalysis}>
+                  <button className="btn btn-secondary btn-small" onClick={handlePopOutAnalysis}>
                     Bring the window to the front
                   </button>
-                  <button className="btn btn-secondary btn-sm" onClick={handleDockAnalysis}>
+                  <button className="btn btn-secondary btn-small" onClick={handleDockAnalysis}>
                     Show it here again
                   </button>
                 </div>

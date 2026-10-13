@@ -61,6 +61,22 @@ export function ruleTarget(rule: TriggerRule, probes: Pick<IlaProbe, "name" | "f
   return probe ? probeKey(probe) : rule.probeName;
 }
 
+/**
+ * The rule a probe begins with when it is made the trigger: a rising edge for a single bit, the value 0 in hex
+ * for a bus. "Set Trigger" of the probe list and the list of probes of the trigger card both ask here.
+ */
+export function ruleForProbe(probe: Pick<IlaProbe, "name" | "fullName" | "isBus" | "width">): TriggerRule {
+  return {
+    probeName: probe.name,
+    probeFullName: probeKey(probe),
+    isBus: probe.isBus,
+    width: probe.width,
+    op1Bit: probe.isBus ? undefined : "R",
+    opMultiBit: probe.isBus ? "hex" : undefined,
+    value: probe.isBus ? "0" : undefined,
+  };
+}
+
 /** "<probe> <compare-value>" for the Tcl side; `target` is the name the probe is looked up by. */
 export function ruleTrigger(rule: TriggerRule, target: string): string {
   return `${target} ${compareValue(rule)}`;

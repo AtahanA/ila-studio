@@ -3,6 +3,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronFirst, ChevronLast, ChevronLeft, ChevronRight } from "lucide-react";
+import { useDismiss } from "../dismiss";
 
 /** One capture of this session as the navigator lists it. */
 export interface CaptureItem {
@@ -64,24 +65,7 @@ export const CaptureNavigator: React.FC<CaptureNavigatorProps> = ({ items, index
 
   // The list closes on a click elsewhere and on Escape. That click only closes it: it must not also place a
   // cursor in the plot it happens to land on, or start a drag there.
-  useEffect(() => {
-    if (!open) return;
-    const outside = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        e.stopPropagation();
-      }
-    };
-    const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("pointerdown", outside, true);
-    window.addEventListener("keydown", key);
-    return () => {
-      window.removeEventListener("pointerdown", outside, true);
-      window.removeEventListener("keydown", key);
-    };
-  }, [open]);
+  useDismiss(open, rootRef, () => setOpen(false));
 
   // It opens with the capture on screen in the middle of the list. Only the list is scrolled: scrollIntoView
   // would also move the page and every clipped box around it.

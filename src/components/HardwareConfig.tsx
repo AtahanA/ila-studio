@@ -3,6 +3,7 @@
 
 import React from "react";
 import { IlaCore } from "../types";
+import { shortCore } from "../names";
 import { Server, FileCode, Cpu, Radio, Sparkles, FolderOpen } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -120,7 +121,7 @@ export const HardwareConfig: React.FC<HardwareConfigProps> = ({
     <div className="card hardware-card">
       <div className="card-header">
         <div className="card-title">
-          <Server size={18} className="text-accent" />
+          <Server size={18} />
           <h3>Hardware & ILA Core Input</h3>
         </div>
       </div>
@@ -275,8 +276,7 @@ export const HardwareConfig: React.FC<HardwareConfigProps> = ({
             <div className="cores-chips">
               {cores.map((c, idx) => {
                 // the last part of the cell path says which core it is; the whole path is the tooltip
-                const leaf = c.name.split("/").pop() || c.name;
-                const short = leaf.includes(".") ? leaf.slice(leaf.lastIndexOf(".") + 1) : leaf;
+                const short = shortCore(c.name);
                 const count = coreProbeCounts?.[idx] || 0;
                 return (
                 <button

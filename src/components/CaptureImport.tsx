@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Atahan Aggunlu
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FileText, FolderOpen } from "lucide-react";
+import { useDismiss } from "../dismiss";
 
 interface CaptureImportProps {
   /** the files and folders that were chosen; which of them are captures is for the receiver to find out */
@@ -26,24 +27,7 @@ export const CaptureImport: React.FC<CaptureImportProps> = ({ onImport, onError 
   const rootRef = useRef<HTMLSpanElement | null>(null);
 
   // closes on a click elsewhere and on Escape; that click must not also place a cursor in a plot
-  useEffect(() => {
-    if (!open) return;
-    const outside = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        e.stopPropagation();
-      }
-    };
-    const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("pointerdown", outside, true);
-    window.addEventListener("keydown", key);
-    return () => {
-      window.removeEventListener("pointerdown", outside, true);
-      window.removeEventListener("keydown", key);
-    };
-  }, [open]);
+  useDismiss(open, rootRef, () => setOpen(false));
 
   const choose = async (folder: boolean) => {
     setOpen(false);
@@ -75,7 +59,7 @@ export const CaptureImport: React.FC<CaptureImportProps> = ({ onImport, onError 
   return (
     <span className="capture-import" ref={rootRef}>
       <button
-        className={`btn btn-secondary btn-sm capture-import-btn ${open ? "on" : ""}`}
+        className={`btn btn-secondary btn-small ${open ? "on" : ""}`}
         aria-haspopup="true"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}

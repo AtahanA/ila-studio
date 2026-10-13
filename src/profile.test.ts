@@ -16,6 +16,7 @@ import {
   sameFileName,
   settingsOf,
 } from "./profile";
+import { ruleTrigger } from "./trigger";
 import type { CaptureConfig, TriggerRule } from "./types";
 
 const capture = (more: Partial<CaptureConfig> = {}): CaptureConfig => ({
@@ -252,14 +253,31 @@ describe("guiOf", () => {
   });
 
   it("keeps the radix, the value and the names of a bus rule", () => {
-    const rule = { probeName: "adc_data", probeFullName: "u_top/adc_data", isBus: true, width: 14, opMultiBit: "dec", value: "100", rawExpression: "x" };
+    const rule = { probeName: "adc_data", probeFullName: "u_top/adc_data", isBus: true, width: 14, opMultiBit: "dec", value: "100" };
     expect(guiOf({ gui: { rule } })?.rule).toEqual(rule);
     expect(guiOf({ gui: { rule: { ...rule, opMultiBit: "oct", value: 7 } } })?.rule).toMatchObject({ opMultiBit: "hex", value: "0" });
+  });
+
+  it("takes of a rule only what the page works with", () => {
+    const rule = { probeName: "adc_data", probeFullName: "u_top/adc_data", isBus: true, width: 14, opMultiBit: "dec", value: "100" };
+    expect(guiOf({ gui: { rule: { ...rule, rawExpression: "x", note: "by hand" } } })?.rule).toEqual(rule);
+  });
+
+  // "custom" was a radix of the type that no button showed: none of Hex / Dec / Bin was highlighted for it, and
+  // it was sent as hex. It reads as hex now, and what is sent for such a profile is what was sent before.
+  it("reads a radix the page does not offer as hex, which is what was sent for it", () => {
+    const read = guiOf({ gui: { rule: { probeName: "adc_data", probeFullName: "u_top/adc_data", isBus: true, width: 14, opMultiBit: "custom", value: "2a" } } })?.rule;
+    expect(read?.opMultiBit).toBe("hex");
+    expect(read && ruleTrigger(read, "u_top/adc_data")).toBe("u_top/adc_data eq14'h002a");
   });
 
   it("reads a 1-bit rule: a rising edge unless it names another compare it knows", () => {
     expect(guiOf({ gui: { rule: { probeName: "a", width: 1, op1Bit: "Z" } } })?.rule).toEqual({ probeName: "a", isBus: false, width: 1, op1Bit: "R" });
     expect(guiOf({ gui: { rule: { probeName: "a", width: 1, op1Bit: "F", value: "1" } } })?.rule).toEqual({ probeName: "a", isBus: false, width: 1, op1Bit: "F" });
+    // X (do not care) is one of them, although no button sets it: it reaches the trigger as the profile wrote it
+    const dontCare = guiOf({ gui: { rule: { probeName: "a", width: 1, op1Bit: "X" } } })?.rule;
+    expect(dontCare?.op1Bit).toBe("X");
+    expect(dontCare && ruleTrigger(dontCare, "u_top/a")).toBe("u_top/a eq1'bX");
   });
 
   it("has no rule without a probe name or a width", () => {

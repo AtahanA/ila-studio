@@ -29,6 +29,7 @@ export interface LtxResult {
   probes: IlaProbe[];
   /** Slowest debug hub clock named in the probe file, 0 if absent. TCK must stay below hubClockHz / 2.5. */
   hubClockHz?: number;
+  /** sent, not used: hubClockHz / 2.5, which the page works out itself to mark the presets (HardwareConfig) */
   maxSafeTckHz?: number;
   error?: string;
 }
@@ -37,6 +38,7 @@ export interface ProfileInfo {
   filename: string;
   path: string;
   name: string;
+  /** sent, not used: the `_comment` of the profile, which the page takes from `data` where it needs it */
   comment: string;
   ltxExists?: boolean;
   mtime?: number;
@@ -80,9 +82,18 @@ export interface SignalData {
   signed?: boolean;
 }
 
+/**
+ * Up to this many samples the viewer and the analysis plots get every sample (they draw per pixel column, so
+ * nothing is lost on the way to the screen either): measurements and spectra are then made on the real data.
+ * It covers the deepest ILA buffer; anything longer is thinned and the viewer's footer says so. The window of
+ * the analysis reads its captures with the same number.
+ */
+export const VIEWER_MAX_SAMPLES = 131072;
+
 export interface WaveformResult {
   filePath: string;
   totalSamples: number;
+  /** sent, not used: how many samples sampleIndices holds */
   displayedSamples: number;
   step: number;
   sampleIndices: number[];
@@ -107,18 +118,19 @@ export interface ComparedCapture {
   error?: string;
 }
 
-/** Answer of a hardware command (query / capture / Tcl run) as the backend returns it. */
 /** The Vivado hardware session the backend keeps open between jobs (its "ila-session" event). */
 export interface HwSession {
-    connected: boolean;
-    device?: string;
-    tckHz?: number;
-    server?: string;
-    reason?: string;
-    /** how many Vivado engines the session runs (2 with Twin Turbo) */
-    engines?: number;
+  connected: boolean;
+  device?: string;
+  tckHz?: number;
+  server?: string;
+  /** sent, not used: what made the session open or close */
+  reason?: string;
+  /** how many Vivado engines the session runs (2 with Twin Turbo) */
+  engines?: number;
 }
 
+/** Answer of a hardware command (query / capture / Tcl run) as the backend returns it. */
 export interface HwResult {
   success: boolean;
   message: string;
@@ -127,12 +139,15 @@ export interface HwResult {
   probes?: IlaProbe[];
   info?: Record<string, string>;
   csvPath?: string | null;
+  /** sent, not used: the session folder of a capture job */
   sessionDir?: string | null;
+  /** sent, not used: how many captures the job took */
   captures?: number;
   stopped?: boolean;
   rawOutput?: string;
-  /** a hardware query: the cell name of the core the session is on, and its position among `cores` */
+  /** a hardware query: the cell name of the core the session is on (sent, not used: the page goes by its position) */
   core?: string;
+  /** ... and the position of that core among `cores` */
   coreIndex?: number;
 }
 
@@ -149,8 +164,13 @@ export interface StopAnswer {
 
 export type CaptureMode = "just_capture" | "trigger_rule" | "constant_capture";
 
+/**
+ * "X" (do not care) is the one compare no button of the trigger card sets: only a rule written by hand into a
+ * profile has it. It is sent as written (the preview of the card shows `eq1'bX`, and none of its buttons is
+ * highlighted), so it has to stay a value of the type.
+ */
 export type TriggerOperator1Bit = "1" | "0" | "R" | "F" | "B" | "X";
-export type TriggerOperatorMultiBit = "hex" | "dec" | "bin" | "custom";
+export type TriggerOperatorMultiBit = "hex" | "dec" | "bin";
 
 export interface TriggerRule {
   probeName: string;
@@ -161,7 +181,6 @@ export interface TriggerRule {
   op1Bit?: TriggerOperator1Bit;
   opMultiBit?: TriggerOperatorMultiBit;
   value?: string;
-  rawExpression?: string;
 }
 
 export interface CaptureConfig {
