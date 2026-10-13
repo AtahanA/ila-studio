@@ -102,28 +102,77 @@ contribution you agree that it is published under the same licence.
 
 ## Release checklist
 
+A release is the portable folder, packed as `ila-studio-<version>-windows-x64.zip`, and its SHA-256 sum, both
+attached to the GitHub release of the tag `v<version>`. The archive is built by GitHub from the tag
+(`.github/workflows/release.yml`), not on somebody's PC.
+
+What you do:
+
 1. Set the version. It lives in `package.json` and `package-lock.json`, which
-   `npm version <new> --no-git-tag-version` changes together, and in `src-tauri/Cargo.toml` (the next cargo
-   command carries it into `src-tauri/Cargo.lock`). `src-tauri/tauri.conf.json` has none: the application
-   takes it from `Cargo.toml`.
-2. Write the entry in `CHANGELOG.md` and put the date of the release into its heading (the entry of 0.4.0 reads
-   "Unreleased" until then).
-3. Run all the checks above.
-4. Build from a clean clone of the tagged commit, so that nothing private can be in the folder: `npm ci`, then
-   `.\make_distribute.ps1`.
-5. Never publish a `distribute\` folder that has been used: it holds `ila_log.txt`, captures and saved
-   profiles. The script names such leftovers; it does not delete them.
-6. Start the built `distribute\ila-studio.exe` once: the page is styled, **Demo Data** works, **Browse** opens
-   a file dialog. Check that the executable does not carry the user folder of the build PC (the script renames
-   the cargo folder in the paths the crates leave in it); this must print 0:
-   `python -c "import sys; print(open(sys.argv[1], 'rb').read().count(b'Users'))" distribute\ila-studio.exe`
-7. The GPL requires that every binary comes with its complete corresponding source. Publish binaries only
-   together with the tagged source of exactly that build, and keep `LICENSE` in the folder (the script copies
-   it).
-8. Before publishing binaries, write the notices of the third-party software into `THIRD-PARTY-NOTICES.md` in
-   the root of the repository (the script copies that file when it exists). The Rust crates can be listed
-   with a tool such as `cargo about`; `npm ls --omit=dev --all` lists the npm packages that are shipped.
-9. Pack the folder and publish its SHA-256 sum with it. In PowerShell:
-   `Compress-Archive -Path distribute\* -DestinationPath ila-studio-<version>-windows.zip`, then
-   `Get-FileHash ila-studio-<version>-windows.zip -Algorithm SHA256`.
-   Say in the release notes that the executable is not signed.
+   `npm version <new> --no-git-tag-version` changes together, and in `src-tauri/Cargo.toml`. The next cargo
+   command (`cargo check` in `src-tauri`) carries it into `src-tauri/Cargo.lock`: commit that file too.
+   `src-tauri/tauri.conf.json` has none: the application takes it from `Cargo.toml`.
+2. Write the entry in `CHANGELOG.md` and put the date of the release into its heading, as in
+   `## [0.4.0] - 2026-10-20` (the entry of 0.4.0 reads "Unreleased" until then). The entry becomes the text of
+   the release.
+3. Commit, push, and wait until CI has passed on that commit.
+4. Tag the commit and push the tag: `git tag v<version>`, then `git push origin v<version>`.
+5. The workflow **Release** starts by itself and ends with a **draft** release, which only people who may
+   write to the repository can see. Look at it: read the text, download the archive, compare its SHA-256 sum
+   (`Get-FileHash <file> -Algorithm SHA256`), unpack it and start `ila-studio.exe` once: the page is styled,
+   **Demo Data** works, **Browse** opens a file dialog.
+6. Press **Publish release**. Nothing is public before that. If the draft is wrong, delete it, fix the cause,
+   and tag again; do not move a tag whose release has been published.
+
+What the pipeline does for you. `release.yml` runs every check of CI again on the tagged commit and then
+`make_release.ps1`, which stops at the first thing that is not as it should be:
+
+- The tag fits the version, the version is the same in `Cargo.toml`, `Cargo.lock`, `package.json` and
+  `package-lock.json`, and `CHANGELOG.md` has an entry for it whose heading no longer says "Unreleased".
+- The work tree is the commit and nothing else.
+- `tools/third_party_notices.py` writes `THIRD-PARTY-NOTICES.md`: every Rust crate and npm package inside the
+  program with its version, its licence, where its source is, and the text of its licence files. The same
+  tool is the licence gate: a component without a licence, or with one that is not on its list of licences
+  that may go into a GPL-3.0-or-later program, stops the release. `python tools/third_party_notices.py --check`
+  asks the same question at any time, for instance after a dependency was updated; it needs cargo and
+  `npm ci`, and nothing but the standard library of Python 3.8 or newer.
+- `make_distribute.ps1 -OutDir` builds the executable and assembles the folder in a new place under
+  `release\`. It never touches `distribute\`.
+- The folder is looked at before it is packed: the program, the scripts, the licence, the notices and the two
+  example profiles are there; `profiles\` holds nothing else; there is no `ila_log.txt`, no `captures\`, no
+  `__pycache__`; the executable does not name a user folder of the machine it was built on (the build renames
+  the cargo folder in the paths the crates leave in it) and carries the version of the release.
+- The folder is packed, the SHA-256 sum is written next to the archive, and the text of the release is put
+  together: the changelog entry, the sum, where the source is, and that the executable is not signed.
+- A second job, the only one that may write to the repository, creates the draft release with the two files.
+
+To rehearse a release without making one:
+
+- On GitHub: **Actions**, **Release**, **Run workflow**. A manual run builds the same package from the branch
+  you choose and keeps it as an artifact of the run. It creates no release.
+- On your PC: `npm ci`, then `.\make_release.ps1` in a clean checkout, or `.\make_release.ps1 -AllowDirty`
+  with changes that are not committed. Add `-Tag v<version>` to apply the checks of a tag as well. The result
+  is in `release\`, which git ignores. The script publishes nothing.
+
+The pipeline knows one secret, and it is optional: `ILA_SENTRY_DSN` (**Settings**, **Secrets and variables**,
+**Actions**), the address that crash reports of a release build are sent to. It is compiled into the
+executable by the build step, which is the only step that sees it. Without the secret the release is built
+all the same and has no crash reporting, like a build from source. Never write the address into a tracked
+file. `release.yml` has no `pull_request` trigger and must not get one: a pull request from a fork must not
+reach the secret.
+
+Two settings of the repository are worth switching on after the first push:
+
+- A branch protection rule (or ruleset) for `main` that requires the checks of CI to pass before a merge:
+  `Frontend (typecheck, lint, test, build)`, `Rust (clippy, test)`, `Python 3.8` and `Python 3.13`.
+- **Private vulnerability reporting**, in the security settings of the repository. `SECURITY.md` sends people
+  to **Report a vulnerability**, which only exists once this is on.
+
+What no pipeline takes off your hands:
+
+- Never publish a `distribute\` folder that has been used: it holds `ila_log.txt`, captures and saved
+  profiles. `make_distribute.ps1` names such leftovers; it does not delete them. A release is the archive of
+  the pipeline, or of `make_release.ps1` in a clean clone of the tag.
+- The GPL requires that every binary comes with its complete corresponding source. Publish a binary only
+  together with the tagged source of exactly that build, and keep `LICENSE` and `THIRD-PARTY-NOTICES.md` in
+  the folder (the scripts put them there).

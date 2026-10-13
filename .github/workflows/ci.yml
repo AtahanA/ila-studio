@@ -2,6 +2,7 @@ name: CI
 
 # The checks of CONTRIBUTING.md, on the platform the application is made for. None of them needs Vivado, a board
 # or anything from the network beyond the packages.
+# release.yml runs the same commands again before it builds a package: a check that is added here is added there.
 on:
   push:
   pull_request:
@@ -16,6 +17,8 @@ concurrency:
 env:
   # The Rust the clippy and test results were last checked with. Raise it together with whatever a newer clippy
   # asks for; rust-version in src-tauri/Cargo.toml is the oldest Rust that builds the application.
+  # release.yml has the same variable with the same value, so that a release is built with the Rust that was
+  # checked here: change both files together.
   RUST_TOOLCHAIN: "1.92.0"
 
 jobs:

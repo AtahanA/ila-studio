@@ -1,0 +1,138 @@
+name: Release
+
+# From a pushed tag v<version>: run the checks, build the package of the release (the portable folder, packed, with
+# its SHA-256 sum) and put it into a DRAFT release. The owner looks at the draft and publishes it; nothing reaches
+# the public before that. What the package is made of is the work of make_release.ps1 alone, which does the same
+# on a PC: see "Release checklist" in CONTRIBUTING.md.
+#
+# This workflow is handed a repository secret and, in its last job, a token that may write. It has no
+# pull_request trigger and must never get one: a pull request from a fork must reach neither of them.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  # A manual run is a rehearsal: it builds the package and keeps it as an artifact of the run. No release is made.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  # a release that has begun is finished, not replaced by the next run
+  cancel-in-progress: false
+
+env:
+  # The same variable with the same value as in ci.yml: a release is built with the Rust its checks were made
+  # with. Change both files together.
+  RUST_TOOLCHAIN: "1.92.0"
+
+jobs:
+  package:
+    name: Check, build and pack
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # the token of the run is not left in .git/config, where every build tool could read it
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # The checks of ci.yml, every one of them and in its order: a tag whose commit fails one of them must not
+      # become a package. A check that is added there is added here.
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - name: Install the Rust toolchain
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component clippy --no-self-update
+      - name: Select the Rust toolchain
+        run: rustup default ${{ env.RUST_TOOLCHAIN }}
+      # (No cache of cargo's target folder, unlike ci.yml: a release is compiled from nothing but the tagged
+      # commit and the packages its two lock files name.)
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+      # (both Pythons of ci.yml, one after the other; the second stays selected and writes the notices below)
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.8"
+      - run: python -m pip install "pytest>=7"
+      - run: python -m pytest
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m pip install "pytest>=7"
+      - run: python -m pytest
+
+      # Version against tag and changelog, clean work tree, third-party notices and licence gate, build, the
+      # checks of the folder, archive, sum, release text: all of it is this script, so that all of it can be
+      # tried on a PC. It stops the job at the first thing that is not as it should be.
+      - name: Build and pack (make_release.ps1)
+        # Windows PowerShell 5.1: what the script is written for and was tried with
+        shell: powershell
+        env:
+          # The address crash reports go to, compiled into the executable. Only this step sees the secret, and
+          # the script never prints it. It is optional: a build without it has no crash reporting.
+          ILA_SENTRY_DSN: ${{ secrets.ILA_SENTRY_DSN }}
+        run: .\make_release.ps1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ila-studio-windows-x64
+          path: |
+            release/*.zip
+            release/*.zip.sha256
+            release/*-notes.md
+          if-no-files-found: error
+          # the archive is compressed already
+          compression-level: 0
+
+  draft-release:
+    name: Draft release
+    # only for a pushed tag: a manual run ends with the artifact
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: package
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      # The one place that may write, because it creates the release. This job runs no code of the repository
+      # or of a package: it takes the three files of the job above and hands them to GitHub.
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ila-studio-windows-x64
+          path: release
+      - name: Create the draft release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $files = @(Get-ChildItem release -File)
+          $zip = @($files | Where-Object { $_.Name -like "*.zip" })
+          $sum = @($files | Where-Object { $_.Name -like "*.zip.sha256" })
+          $notes = @($files | Where-Object { $_.Name -like "*-notes.md" })
+          if ($zip.Count -ne 1 -or $sum.Count -ne 1 -or $notes.Count -ne 1) {
+            throw "expected one archive, one sum and one text of the release, found: $($files.Name -join ', ')"
+          }
+          # the archive is still the one the sum was written for
+          $hash = (Get-FileHash $zip[0].FullName -Algorithm SHA256).Hash.ToLower()
+          if ((Get-Content $sum[0].FullName -Raw) -ne "$hash  $($zip[0].Name)`n") {
+            throw "$($sum[0].Name) does not fit $($zip[0].Name) ($hash)"
+          }
+          # A draft on purpose: the owner reads it, tries the archive and presses Publish. --verify-tag: gh must
+          # never make a tag of its own.
+          $title = "ILA Studio $($tag -replace '^v', '')"
+          gh release create $tag --draft --verify-tag --title $title --notes-file $notes[0].FullName $zip[0].FullName $sum[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed (exit $LASTEXITCODE)" }

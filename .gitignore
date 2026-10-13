@@ -11,7 +11,8 @@ captures/
 
 # Profiles: only the two shipped examples are tracked, by name. Everything "Save configuration" writes
 # (<name>.json, .json.bak, .json.orig, .json.tmp ...) holds local paths and addresses and stays local -
-# also a profile somebody saves as "example-...". A new shipped example is added here and in make_distribute.ps1.
+# also a profile somebody saves as "example-...". A new shipped example is added here, in make_distribute.ps1
+# and in make_release.ps1.
 /profiles/*
 !/profiles/example-basic.json
 !/profiles/example-hook-uart.json
@@ -36,6 +37,12 @@ coverage
 # --- Rust / Tauri (src-tauri/.gitignore says the same) -----------------------------------------------
 /src-tauri/target/
 /src-tauri/gen/schemas/
+
+# --- Release (make_release.ps1) ----------------------------------------------------------------------
+# The package of a release, and the notices of the third-party software inside it: tools/third_party_notices.py
+# writes them anew from the two lock files, so a tracked copy would only ever be out of date.
+/release/
+/THIRD-PARTY-NOTICES.md
 
 # --- Python ------------------------------------------------------------------------------------------
 __pycache__/

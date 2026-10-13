@@ -6,11 +6,17 @@
 #   .\make_distribute.ps1 -NoBuild      copy only (the Python / Tcl side changed, the executable did not)
 #   .\make_distribute.ps1 -AllProfiles  take every profile of profiles\ along, not only the shipped examples
 #                                       (for a folder that stays on this PC: saved profiles hold local paths)
-param([switch]$NoBuild, [switch]$AllProfiles)
+#   .\make_distribute.ps1 -OutDir <dir> assemble the folder there and leave distribute\ alone (make_release.ps1
+#                                       does: distribute\ is in use, it holds somebody's captures and profiles)
+param([switch]$NoBuild, [switch]$AllProfiles, [string]$OutDir)
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-$dist = Join-Path $root "distribute"
+# a relative -OutDir counts from the folder the script is called in; it need not exist yet
+$dist = if ($OutDir) { $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutDir) }
+        else { Join-Path $root "distribute" }
+# ... and this is how the messages name the folder
+$distName = if ($OutDir) { $dist } else { "distribute\" }
 # one name for the executable: as cargo builds it, as it is copied, and as the process that may be running
 $exeName = "ila-studio.exe"
 
@@ -30,7 +36,8 @@ if (-not $NoBuild) {
 
 $exe = Join-Path $root "src-tauri\target\release\$exeName"
 if (-not (Test-Path $exe)) { throw "$exe not found - build first" }
-if (Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($exeName)) -ErrorAction SilentlyContinue) {
+# (with -OutDir the copy goes to another folder: a program that runs from distribute\ is not in its way)
+if (-not $OutDir -and (Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($exeName)) -ErrorAction SilentlyContinue)) {
     throw "$exeName is running - close it before refreshing distribute\"
 }
 
@@ -59,7 +66,7 @@ $kept = @()
 foreach ($p in Get-ChildItem (Join-Path $root "profiles\*.json") | Where-Object { $AllProfiles -or $shipped -contains $_.Name }) {
     $there = Join-Path $dist "profiles\$($p.Name)"
     if ((Test-Path $there) -and (Get-Item $there).LastWriteTime -gt $p.LastWriteTime) {
-        Write-Host "profiles\$($p.Name): kept as it is in distribute\ (saved there after its source was written)" -ForegroundColor Yellow
+        Write-Host "profiles\$($p.Name): kept as it is in $distName (saved there after its source was written)" -ForegroundColor Yellow
         $kept += Get-Item $there
     } else {
         Copy-Item $p.FullName $there -Force
@@ -75,10 +82,10 @@ if (-not $AllProfiles) {
     $left = @($kept) + @(Get-ChildItem (Join-Path $dist "profiles") -File | Where-Object { $shipped -notcontains $_.Name })
     $left += @("ila_log.txt", "captures" | ForEach-Object { Join-Path $dist $_ } | Where-Object { Test-Path $_ } | Get-Item)
     if ($left) {
-        Write-Host "Not for a release - left in distribute\ by use:" -ForegroundColor Yellow
+        Write-Host "Not for a release - left in $distName by use:" -ForegroundColor Yellow
         $left | ForEach-Object { Write-Host "  $($_.FullName)" -ForegroundColor Yellow }
     }
 }
 
-Write-Host "distribute\ refreshed:" -ForegroundColor Green
+Write-Host "$distName refreshed:" -ForegroundColor Green
 Get-ChildItem $dist -File | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
