@@ -7,7 +7,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -597,28 +597,42 @@ fn clean_file_stem(name: &str) -> String {
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.') { c } else { '_' })
         .collect();
-    // no leading dash either: the name is a command-line argument, and "-x" would be read as an option
-    cleaned.trim_matches('.').trim_start_matches('-').to_string()
+    // no leading dash either: the name is a command-line argument, and "-x" would be read as an option. Dots
+    // and dashes go off the front together: taken one kind after the other, "-.x" would keep its dot.
+    cleaned.trim_start_matches(['.', '-']).trim_end_matches('.').to_string()
 }
 
+/// Windows keeps a few names for its devices, in any letter case and whatever follows the first dot: no file
+/// of such a name comes into being.
+fn is_device_name(stem: &str) -> bool {
+    let first = stem.split('.').next().unwrap_or("").to_ascii_uppercase();
+    matches!(first.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (first.len() == 4
+            && (first.starts_with("COM") || first.starts_with("LPT"))
+            && first.as_bytes()[3].is_ascii_digit())
+}
+
+/// The name the files of a capture get. A device name gets a "_" in front, as a profile of such a name does:
+/// Vivado would be asked to write aux.csv, and the error would not lead back to the name.
 fn safe_file_stem(name: &str) -> String {
-    let cleaned = clean_file_stem(name);
-    if cleaned.is_empty() { "capture".to_string() } else { cleaned }
+    let mut cleaned = clean_file_stem(name);
+    if cleaned.is_empty() {
+        return "capture".to_string();
+    }
+    if is_device_name(&cleaned) {
+        cleaned.insert(0, '_');
+    }
+    cleaned
 }
 
 /// The file a profile of this name is saved in. A name without a single letter or digit of ASCII would be a row
-/// of underscores, and Windows keeps a few names for its devices whatever follows the dot.
+/// of underscores, and a device name of Windows is no file.
 fn profile_file_name(name: &str) -> String {
     let mut stem: String = clean_file_stem(name).chars().take(80).collect();
     if !stem.chars().any(|c| c.is_ascii_alphanumeric()) {
         stem = "profile".to_string();
     }
-    let first = stem.split('.').next().unwrap_or("").to_ascii_uppercase();
-    let device = matches!(first.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (first.len() == 4
-            && (first.starts_with("COM") || first.starts_with("LPT"))
-            && first.as_bytes()[3].is_ascii_digit());
-    if device {
+    if is_device_name(&stem) {
         stem.insert(0, '_');
     }
     format!("{stem}.json")
@@ -659,7 +673,8 @@ fn new_profile_file(dir: &Path, name: &str) -> String {
     if !dir.join(&first).exists() || holds_profile(&dir.join(&first), name) {
         return first;
     }
-    let stem = first.trim_end_matches(".json");
+    // one ".json", that of the file: a name that ends in ".json" itself keeps its own in front of the number
+    let stem = first.strip_suffix(".json").unwrap_or(&first);
     (2..1000)
         .map(|n| format!("{stem}-{n}.json"))
         .find(|file| !dir.join(file).exists() || holds_profile(&dir.join(file), name))
@@ -870,11 +885,25 @@ fn is_plain_csv(path: &Path) -> bool {
     path.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"))
 }
 
-/// A capture that exists as .csv and as .ila (or .csv.gz) next to each other is one capture: the .csv is taken,
-/// it reads fastest, and the others of `paths` are dropped.
+/// Which of the forms a capture is written in this file is, by its name: 0 for .csv, 1 for .csv.gz, 2 for .ila -
+/// the order they are taken in where a capture exists in several, which is that of "summary" in ila_capture.py.
+fn capture_form(path: &Path) -> Option<usize> {
+    let name = path.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    [".csv", ".csv.gz", ".ila"].iter().position(|ext| name.ends_with(ext))
+}
+
+/// A capture that exists in several forms next to each other is one capture: the .csv is taken, it reads
+/// fastest, without one the .csv.gz ("watch" compresses each CSV), and the .ila only where it is all there is.
+/// The others of `paths` are dropped; what stays keeps its order.
 fn drop_twins(paths: &mut Vec<PathBuf>) {
-    let plain: HashSet<(String, String)> = paths.iter().filter(|p| is_plain_csv(p)).map(|p| capture_stem(p)).collect();
-    paths.retain(|p| is_plain_csv(p) || !plain.contains(&capture_stem(p)));
+    let mut best: HashMap<(String, String), usize> = HashMap::new();
+    for path in paths.iter() {
+        if let Some(form) = capture_form(path) {
+            let taken = best.entry(capture_stem(path)).or_insert(form);
+            *taken = (*taken).min(form);
+        }
+    }
+    paths.retain(|p| capture_form(p).is_none_or(|form| best.get(&capture_stem(p)) == Some(&form)));
 }
 
 /// The capture files in `dir` and, `depth` levels down, in its folders - each folder's in the order of their
@@ -1263,17 +1292,34 @@ mod tests {
         assert_eq!(clean_file_stem(".hidden."), "hidden");
         assert_eq!(clean_file_stem("-"), "");
         assert_eq!(clean_file_stem(".-x"), "x");
-        // Questionable, pinned as it is: the dots go before the dash does, so a dot that follows the dash is
-        // left at the front, although a name is not meant to start with one.
-        assert_eq!(clean_file_stem("-.x"), ".x");
+        // in whatever order they stand in front: a name begins with neither
+        assert_eq!(clean_file_stem("-.x"), "x");
+        assert_eq!(clean_file_stem("-.-..x-.y."), "x-.y");
+        assert_eq!(clean_file_stem("-."), "");
     }
 
     #[test]
     fn safe_file_stem_never_comes_out_empty() {
-        for name in ["", "   ", "...", "-", "--"] {
+        for name in ["", "   ", "...", "-", "--", "-.", ".-."] {
             assert_eq!(safe_file_stem(name), "capture", "{name:?}");
         }
         assert_eq!(safe_file_stem("cap_run_001"), "cap_run_001");
+    }
+
+    #[test]
+    fn safe_file_stem_keeps_clear_of_the_device_names_of_windows() {
+        assert_eq!(safe_file_stem("CON"), "_CON");
+        assert_eq!(safe_file_stem("nul"), "_nul");
+        assert_eq!(safe_file_stem(" aux "), "_aux");
+        // whatever follows the first dot does not make it a file of its own
+        assert_eq!(safe_file_stem("con.x"), "_con.x");
+        assert_eq!(safe_file_stem("aux."), "_aux");
+        assert_eq!(safe_file_stem("COM1"), "_COM1");
+        assert_eq!(safe_file_stem("lpt9"), "_lpt9");
+        assert_eq!(safe_file_stem("COM10"), "COM10");
+        assert_eq!(safe_file_stem("COMX"), "COMX");
+        assert_eq!(safe_file_stem("console"), "console");
+        assert_eq!(safe_file_stem("aux_adc"), "aux_adc");
     }
 
     #[test]
@@ -1284,6 +1330,7 @@ mod tests {
         assert_eq!(profile_file_name(""), "profile.json");
         assert_eq!(profile_file_name("\u{e4}\u{f6}\u{fc}"), "profile.json");
         assert_eq!(profile_file_name("_-_"), "profile.json");
+        assert_eq!(profile_file_name("-."), "profile.json");
         assert_eq!(profile_file_name(&"a".repeat(100)), format!("{}.json", "a".repeat(80)));
     }
 
@@ -1342,11 +1389,15 @@ mod tests {
         drop_twins(&mut paths);
         assert_eq!(paths.len(), 2);
 
-        // Questionable, pinned as it is: without a plain .csv nothing is dropped, so a capture that exists as
-        // .ila and as .csv.gz is listed twice.
+        // without a plain .csv the compressed one is taken, and the .ila only where it is all there is
         let mut paths = vec![at("d.ila"), at("d.csv.gz")];
         drop_twins(&mut paths);
-        assert_eq!(paths, [at("d.ila"), at("d.csv.gz")]);
+        assert_eq!(paths, [at("d.csv.gz")]);
+
+        // what is kept stays in its order, and a file that is no capture is nobody's twin
+        let mut paths = vec![at("f.ila"), at("e.csv.gz"), at("e.txt"), at("E.ila"), at("e"), at("f.txt")];
+        drop_twins(&mut paths);
+        assert_eq!(paths, [at("f.ila"), at("e.csv.gz"), at("e.txt"), at("e"), at("f.txt")]);
     }
 
     #[test]
@@ -1382,6 +1433,9 @@ mod tests {
             dir.file(name, CAPTURE);
         }
         dir.file("cap_1.ila", ""); // the twin of cap_1.csv
+        // what "watch --format both" leaves of a window: no plain .csv, and still one capture
+        dir.file("cap_3.ila", "");
+        dir.file("cap_3.csv.gz", "");
         dir.file("index.csv", "file,trigger\n");
         dir.file("notes.txt", "");
         dir.file("session_a/run_summary.csv", "window,rows\n");
@@ -1395,7 +1449,10 @@ mod tests {
         // a folder takes its place among the files by its name; the third level down is not looked into
         assert_eq!(
             names,
-            ["cap_1.csv", "cap_2.csv", "cap_10.csv", "session_a/deeper/d1.csv", "session_a/w2.csv", "session_a/w10.csv"]
+            [
+                "cap_1.csv", "cap_2.csv", "cap_3.csv.gz", "cap_10.csv", "session_a/deeper/d1.csv", "session_a/w2.csv",
+                "session_a/w10.csv",
+            ]
         );
         assert_eq!(skipped, 2);
 
@@ -1403,7 +1460,7 @@ mod tests {
         let mut skipped = 0;
         collect_captures(&dir.0, 0, &mut found, &mut skipped);
         let names: Vec<String> = found.iter().map(|p| dir.relative(p)).collect();
-        assert_eq!(names, ["cap_1.csv", "cap_2.csv", "cap_10.csv"]);
+        assert_eq!(names, ["cap_1.csv", "cap_2.csv", "cap_3.csv.gz", "cap_10.csv"]);
         assert_eq!(skipped, 1);
 
         // a folder that is not there holds nothing
@@ -1476,9 +1533,8 @@ mod tests {
         let dir = Scratch::new("new_profile_file_json");
         assert_eq!(new_profile_file(&dir.0, "x.json"), "x.json.json");
         dir.file("x.json.json", r#"{"name": "another"}"#);
-        // Questionable, pinned as it is: every ".json" at the end is cut before the number is put on, the one
-        // of the name with it - x-2.json, where x.json-2.json was to be expected. The file is free all the same.
-        assert_eq!(new_profile_file(&dir.0, "x.json"), "x-2.json");
+        // the number goes behind the name as it was typed: only the ".json" of the file is taken off for it
+        assert_eq!(new_profile_file(&dir.0, "x.json"), "x.json-2.json");
     }
 
     #[test]
