@@ -159,9 +159,13 @@ when it notices the change, at the latest when its window next gets the focus.
 While it is on, a report is sent when the program runs into an error: an error of the page that nothing caught,
 an error while a window is drawn, or a crash (panic) of the backend. A report contains:
 
-- the error text, the kind of error, and where in the program it happened: the stack, which is function
-  names, the paths of the program's own source files, line numbers and, for a crash of the backend, addresses
-  in its code (for an error while a window is drawn, also the components that were being drawn);
+- the error text, the kind of error, and where in the program it happened. For an error of the page that is
+  the stack: function names, the paths of the program's own files and line numbers (for an error while a
+  window is drawn, also the components that were being drawn; for an error that names its cause, the text and
+  the stack of the cause as well). For a crash of the backend it is the source file, line and column of the
+  crash. A release is built without the names a stack is made of: its stack, which would name no place in
+  the program and be a row of addresses in its code, is left out. A development build (`npm run tauri dev`)
+  has them, and adds function names, source paths, line numbers and those addresses;
 - the time, a random id, the version of ILA Studio and whether it is a release or a development build, the
   version of Windows, the processor architecture (`x86_64`), the Rust version the program was built with, the
   name and version of the reporting library, and which window it was (main or analysis);
@@ -174,29 +178,53 @@ reports belong together and how long the program had been running.
 
 It never contains captures, profiles, `ila_log.txt`, the probe file or your settings as such, nor what you did
 before the error. A single value of them can be part of an error text: the path of the probe file, the
-hw_server address. The name of the PC, which the reporting library would add, is removed; a name that stands
-inside an error text is a text like any other (see below).
+hw_server address. The name of the PC, which the reporting library would add, is removed.
 
-Before a report leaves, three things are taken out of every text in it:
+Before a report leaves, these are taken out of every text in it:
 
 - the name of a user folder, which is the folder below `Users` or `home`: `C:\Users\<name>\...`,
   `/home/<name>/...`, also on a share (`\\server\home$\<name>\...`);
 - the server of a network path: `\\server\share\...`, `//server/share/...`, `\\?\UNC\server\share\...`,
   `file://server/share/...`;
-- IPv4 addresses (a port behind one stays).
+- the names of this PC and of its user, as Windows gives them when the program starts (`%COMPUTERNAME%` and
+  the host name; `%USERNAME%` and the name of the folder `%USERPROFILE%`), wherever one stands as a word of
+  its own: `D:\Profiles\<name>\...`, "access denied for <name>", `<pc>:3121`, also as a URL writes it
+  (`C%3A%5CUsers%5C<name>`). The letters A to Z are found in either case; a name with other letters is found
+  as Windows writes it, with all its letters small and with all of them capital. The words every report is
+  made of are not searched for them - the names of its fields and of its parts, the platform, the severity,
+  the version of ILA Studio, whether it is a release or a development build, the reporting library and what
+  it has in use - so a PC called `STUDIO` leaves `ila-studio` as it is. The kind of an error, how it was
+  caught and the window are searched as a text is: on a PC called `MAIN`, the report says `<host>` for the
+  main window;
+- IPv4 addresses (a port behind one stays);
+- IPv6 addresses, in brackets (`[2001:db8::10]:3121`: the port stays, as does a zone such as `%eth0`) and
+  standing free (`2001:db8::10`, `fe80::1`). Written behind a free address, a port stays if the address has
+  all its eight groups; behind a shortened one it is taken for one more group of the address, where it can
+  be one, and goes with it.
 
 A text is cut after 2,000 characters. **Nothing else is recognised.** Sent as they stand in an error text:
 
 - the name of a probe, of a file or of a folder - whatever the failing step was working with;
-- a host that is called by its name, also in a URL (`http://host/...`); a server named without a share
-  (`\\server`), or in a path written directly behind a word, with no space or quote between
-  (`-o\\server\share`);
-- a user name or a PC name that stands alone, and a user folder that is not below `Users` or `home`
-  (`D:\Profiles\<name>`);
-- a path in another notation, such as URL-encoded (`C%3A%5CUsers%5C<name>`);
-- IPv6 addresses, and an IPv4 address that reads as a part of a version number: inside a longer row of
-  numbers (`1.2.3.4.5`, so also an address with a port below 256 written behind a dot) or behind a `v`
-  (`v1.2.3.4`).
+- another host that is called by its name, also in a URL (`http://host/...`), and the name of a Windows
+  domain; a server named without a share (`\\server`), or in a path written directly behind a word, with no
+  space or quote between (`-o\\server\share`);
+- the name of another user or of another PC that stands alone, and the folder of another user that is not
+  below `Users` or `home` (`D:\Profiles\<name>`);
+- the name of this PC or of its user where it is shorter than four characters (a user called `lab` would be
+  taken out of every other sentence), where a letter or a digit stands directly in front of it or behind it
+  (`<name>2`), and where only a part of it stands there (one word of a name of two);
+- a path in another notation, such as URL-encoded (`C%3A%5CUsers%5C<name>`): the name in it goes only if it
+  is that of the user of this PC;
+- an IPv4 address that reads as a part of a version number: inside a longer row of numbers (`1.2.3.4.5`, so
+  also an address with a port below 256 written behind a dot) or behind a `v` (`v1.2.3.4`);
+- an IPv6 address that reads as something else. Without brackets, a shortened one whose groups all begin
+  with a letter and that has no single colon (`fe80::a`) is written like a name in the program's own stack
+  (`core::fmt`), and stays. So does one that stands in a row of numbers (`1.2.3.4.5::1`), directly in front
+  of a letter or a `_`, or in the square brackets of an index (`x[::1]`). Directly behind a letter or a
+  `_`, what stands up to the first single colon is taken for a part of that word: `srv2001:db8::10` becomes
+  `srv2001:<ip>`, and `srvfe80::1` stays;
+- an IPv6 address or a name of this PC directly in front of `:\\`, if it ends in a single letter (that reads
+  as the letter of a drive), or in the word `file` with three backslashes behind the colon.
 
 That is why crash reports are off by default. Leave them off where such names must not leave the building.
 

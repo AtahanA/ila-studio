@@ -59,6 +59,10 @@ const listeners = new Set<() => void>();
 let early: [unknown, ErrorSource][] | null = [];
 /** The storage said "on" for the address of this run when this window last looked: see follow(). */
 let storedOn = false;
+/** How many causes of an error are followed: a chain can be long, and can come back to where it began. */
+const MAX_CAUSES = 3;
+/** What this window last asked of the backend about its switch, answered or not: see inTurn(). */
+let asked: Promise<unknown> = Promise.resolve();
 
 function set(next: CrashReportsState) {
   const same = (Object.keys(next) as (keyof CrashReportsState)[]).every((key) => next[key] === state[key]);
@@ -95,12 +99,24 @@ function forget() {
 }
 
 /**
+ * What this window asks the backend about its switch, and what it tells it, goes one after the other: `step`
+ * begins when everything asked before it is answered and taken over. Of two questions that are open at the same
+ * time the answers can arrive in the other order - and "how does the switch stand?", read before the switch was
+ * turned and answered after the turn, would put the box back to the opposite of what the backend does.
+ */
+function inTurn<T>(step: () => Promise<T>): Promise<T> {
+  const answer = asked.then(step);
+  asked = answer.catch(() => undefined);
+  return answer;
+}
+
+/**
  * Takes over what the backend says. Its switch is the one that counts during a run; the storage only remembers
  * the choice for the next one. So at the start of a window (`push`) a stored "on" is handed to the backend, which
  * starts every run switched off - if it was stored for the address this run reports to (see consentFor). Whatever
  * else is stored is removed, and the backend stays off until the box is ticked again.
  */
-async function refresh(push: boolean) {
+async function look(push: boolean) {
   try {
     let answer = await invoke<CrashReportsState>("crash_reports_state");
     const destination = typeof answer.destination === "string" ? answer.destination : null;
@@ -127,11 +143,16 @@ async function refresh(push: boolean) {
   }
 }
 
+/** look(), in its turn. */
+function refresh(push: boolean): Promise<void> {
+  return inTurn(() => look(push));
+}
+
 /**
  * The stored choice may have changed - in the other window of the app, or in another running copy of the program,
  * which has a backend of its own - or this window got the focus and looks again. If it said "on" for the address
  * of this run and no longer does, the box was unticked somewhere: this backend is told "off". Never "on": that a
- * choice is stored switches a backend on at the start of a window only (see refresh). Then the backend is asked.
+ * choice is stored switches a backend on at the start of a window only (see look). Then the backend is asked.
  */
 async function follow() {
   const kept = stored();
@@ -139,7 +160,7 @@ async function follow() {
     const on = consentFor(kept, state.destination);
     if (storedOn && !on) {
       try {
-        await invoke("set_crash_reports", { enabled: false });
+        await inTurn(() => invoke("set_crash_reports", { enabled: false }));
       } catch {
         return; // it could not be told: the next look tells it again
       }
@@ -149,8 +170,37 @@ async function follow() {
   await refresh(false);
 }
 
-/** The text of whatever was thrown, and its stack if it has one. Anything can be thrown, not only an Error. */
+/**
+ * The text of whatever was thrown, and its stack if it has one - together with those of its cause, if it names
+ * one. React reports an error it got over by drawing the window once more as an error of its own, always with the
+ * same text; the error that happened is the `cause` of that one. The cause stands first, in the message and in the
+ * stack: both are cut at their end, and what is reported is what happened, under its own kind of error. Anything
+ * can be a cause, a cause can have one of its own, and a chain of them can come back to where it began.
+ */
 export function describeError(value: unknown): { message: string; stack?: string } {
+  let { message, stack } = describeOne(value);
+  const seen = [value];
+  let cause = causeOf(value);
+  while (cause != null && seen.length <= MAX_CAUSES && !seen.includes(cause)) {
+    seen.push(cause);
+    const inner = describeOne(cause);
+    message = `${inner.message} (cause of: ${message})`;
+    stack = inner.stack && stack ? `${inner.stack}\n${stack}` : (inner.stack ?? stack);
+    cause = causeOf(cause);
+  }
+  return { message, stack };
+}
+
+function causeOf(value: unknown): unknown {
+  try {
+    return value !== null && typeof value === "object" ? (value as { cause?: unknown }).cause : undefined;
+  } catch {
+    return undefined; // (reading it is code of whoever made the error)
+  }
+}
+
+/** The text of whatever was thrown, and its stack if it has one. Anything can be thrown, not only an Error. */
+function describeOne(value: unknown): { message: string; stack?: string } {
   if (typeof value === "string") return { message: value };
   if (value !== null && typeof value === "object") {
     const { message, name, stack } = value as { message?: unknown; name?: unknown; stack?: unknown };
@@ -253,17 +303,20 @@ export function startCrashReports(name: WindowName): void {
 export async function setCrashReports(on: boolean): Promise<void> {
   if (!state.available) return;
   if (!on) forget();
-  await invoke("set_crash_reports", { enabled: on });
-  storedOn = false;
-  if (on && state.destination) {
-    try {
-      localStorage.setItem(STORAGE_KEY, `on ${state.destination}`);
-      storedOn = true;
-    } catch {
-      // the choice then lasts for this run only
+  // (in its turn: a look at the backend that is under way is taken over first, and the next one sees this)
+  await inTurn(async () => {
+    await invoke("set_crash_reports", { enabled: on });
+    storedOn = false;
+    if (on && state.destination) {
+      try {
+        localStorage.setItem(STORAGE_KEY, `on ${state.destination}`);
+        storedOn = true;
+      } catch {
+        // the choice then lasts for this run only
+      }
     }
-  }
-  set({ ...state, enabled: on });
+    set({ ...state, enabled: on });
+  });
 }
 
 /** Sends one test report; resolves to the id it has on the report server, rejects with a sentence to show. */

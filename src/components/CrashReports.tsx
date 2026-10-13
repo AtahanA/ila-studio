@@ -79,9 +79,10 @@ export const CrashReports: React.FC = () => {
             the log or the probe file.
           </p>
           <p>
-            The names of user folders, the server of a network path and IPv4 addresses are taken out of the text
-            where they stand in their usual notation. Other names are not recognised: an error text can hold the
-            name of a probe, a file or a host. That is why this is off until you switch it on.
+            The names of user folders, the server of a network path, the names of this PC and of its Windows user
+            and IP addresses are taken out of the text where they stand in their usual notation. Other names are
+            not recognised: an error text can hold the name of a probe, a file or another host. That is why this
+            is off until you switch it on.
           </p>
           {server && (
             <p>

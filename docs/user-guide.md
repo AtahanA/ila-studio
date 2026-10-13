@@ -50,10 +50,10 @@ cannot show this window.", shows the error as text that can be copied, and offer
 - **Send crash reports**: while the box is ticked, an error of the program - in either window, or in the
   backend - is reported to the server the panel names. A report holds the error text and where in the program
   it happened, the version of the program and of Windows. It never holds captures, profiles, the log or the
-  probe file. The names of user folders, the server of a network path and IPv4 addresses are taken out of the
-  text where they stand in their usual notation; a probe name, a file name or a host name inside an error
-  text is not recognised and is sent. The same message is reported once in a run, and a run reports twenty
-  errors of the page at most.
+  probe file. The names of user folders, the server of a network path, the names of this PC and of its
+  Windows user and IP addresses are taken out of the text where they stand in their usual notation; a probe
+  name, a file name or the name of another host inside an error text is not recognised and is sent. The same
+  message is reported once in a run, and a run reports twenty errors of the page at most.
 - The box is ticked for the server the panel names, and for no other: started with another report address
   (see `ILA_SENTRY_DSN` on the project page), the program has it unticked again. Unticking holds from that
   moment, also for a report that was still waiting to be sent, and reaches a second copy of the program that

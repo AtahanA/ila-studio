@@ -34,6 +34,66 @@ describe("describeError", () => {
     expect(describeError({ code: 3 }).message).toBe("[object Object]");
     expect(describeError(Object.create(null)).message).toBe("an error that cannot be shown as text");
   });
+
+  // What React reports of an error it got over by drawing the window once more: an error of its own, always with
+  // this text, whose cause is the error that happened.
+  const RECOVERED = "There was an error during concurrent rendering but React was able to recover.";
+  /** an Error with a cause (the second argument of Error is younger than what the project is checked against) */
+  const caused = (message: string, cause: unknown) => Object.assign(new Error(message), { cause });
+
+  it("puts the cause of an error in front of it, in the message and in the stack", () => {
+    const cause = new TypeError("x is undefined");
+    const error = caused(RECOVERED, cause);
+    expect(describeError(error)).toEqual({
+      message: `x is undefined (cause of: ${RECOVERED})`,
+      stack: `${cause.stack}\n${error.stack}`,
+    });
+    // the stack begins with the kind of error that happened: that is what the backend names the report by
+    expect(describeError(error).stack).toMatch(/^TypeError: x is undefined\n/);
+  });
+
+  it("takes a cause that is a text, or anything else that can be thrown", () => {
+    const error = caused("could not load the profile", "ila_bridge.py was not found");
+    expect(describeError(error)).toEqual({
+      message: "ila_bridge.py was not found (cause of: could not load the profile)",
+      stack: error.stack,
+    });
+    expect(describeError({ message: "outer", cause: 42 }).message).toBe("42 (cause of: outer)");
+    expect(describeError({ message: "outer", cause: { message: "inner", stack: "at a (b:1:2)" } })).toEqual({
+      message: "inner (cause of: outer)",
+      stack: "at a (b:1:2)",
+    });
+    // no cause: none named, and one that is nothing
+    expect(describeError({ message: "outer", cause: null }).message).toBe("outer");
+    expect(describeError({ message: "outer", cause: undefined }).message).toBe("outer");
+    // one that cannot be read
+    const locked = {
+      message: "outer",
+      get cause(): unknown {
+        throw new Error("not for you");
+      },
+    };
+    expect(describeError(locked).message).toBe("outer");
+  });
+
+  it("follows the cause of a cause, three of them and no more", () => {
+    let error: unknown = "the first";
+    for (const message of ["e4", "e3", "e2", "e1", "e0"]) error = caused(message, error);
+    // (e0 was caused by e1, e1 by e2 ... e4 by "the first")
+    const { message, stack } = describeError(error);
+    expect(message).toBe("e3 (cause of: e2 (cause of: e1 (cause of: e0)))");
+    expect(stack?.match(/^Error: e\d$/gm)).toEqual(["Error: e3", "Error: e2", "Error: e1", "Error: e0"]);
+  });
+
+  it("stops where a chain of causes comes back to where it began", () => {
+    const a = new Error("a");
+    const b = caused("b", a);
+    Object.assign(a, { cause: b });
+    expect(describeError(a).message).toBe("b (cause of: a)");
+    const self = new Error("its own cause");
+    Object.assign(self, { cause: self });
+    expect(describeError(self)).toEqual({ message: "its own cause", stack: self.stack });
+  });
 });
 
 describe("isBenign", () => {
@@ -102,6 +162,9 @@ interface Page {
     unencrypted: boolean;
   };
   outcome: string;
+  /** what the answers to the next questions about the state wait for, in the order they are asked (null: nothing).
+   *  Such an answer says how the switch stood when the backend was asked, not when it answers. */
+  waits: (Promise<void> | null)[];
   /** commands that fail from now on */
   failing: Set<string>;
   dispatch: (type: string, fields?: object) => void;
@@ -123,6 +186,7 @@ function openPage(): Page {
       unencrypted: false,
     },
     outcome: "sent",
+    waits: [],
     failing: new Set(),
     dispatch: (type, fields = {}) => void events.dispatchEvent(Object.assign(new Event(type), fields)),
     reports: () =>
@@ -149,7 +213,11 @@ function openPage(): Page {
     invoke: async (command: string, args?: { enabled?: boolean }) => {
       page.calls.push([command, args]);
       if (page.failing.has(command)) throw `${command} failed`;
-      if (command === "crash_reports_state") return { ...page.backend };
+      if (command === "crash_reports_state") {
+        const answer = { ...page.backend };
+        await page.waits.shift();
+        return answer;
+      }
       if (command === "set_crash_reports") {
         // as the backend: the switch does nothing in a build without a report address
         if (page.backend.available) page.backend.enabled = args?.enabled === true;
@@ -369,6 +437,26 @@ describe("uncaught errors, while crash reports are on", () => {
     expect(page.reports().map((r) => r.message)).toEqual(Array.from({ length: 20 }, (_, i) => `error ${i}`));
   });
 
+  // React reports every error it recovered from with one and the same message: by that message alone, the second
+  // of them was a repetition of the first, whatever had happened.
+  it("hands over what React recovered from by its cause: each cause once, and in front of what is cut", async () => {
+    const { page } = await startOn();
+    const long = `React was able to recover. ${"r".repeat(9000)}`;
+    const recovered = (cause: unknown) => Object.assign(new Error(long), { cause });
+    const first = new TypeError("x is undefined");
+    page.dispatch("error", { error: recovered(first) });
+    page.dispatch("error", { error: recovered(new RangeError("too deep")) });
+    page.dispatch("error", { error: recovered(new TypeError("x is undefined")) });
+    await settle();
+    const reports = page.reports();
+    expect(reports.map((r) => (r.message as string).split(" (cause of: React was able to recover. rrr")[0])).toEqual([
+      "x is undefined",
+      "too deep",
+    ]);
+    expect((reports[0].message as string).length).toBe(8000);
+    expect((reports[0].stack as string).startsWith(`${first.stack}\nError: React was able to recover.`)).toBe(true);
+  });
+
   it("cuts a text that is too long to cross to the backend", async () => {
     const { page } = await startOn();
     page.dispatch("error", { error: { message: "m".repeat(9000), stack: "s".repeat(30000) } });
@@ -514,6 +602,93 @@ describe("setCrashReports", () => {
     page.failing.clear();
     page.dispatch("focus");
     await settle();
+    expect(page.backend.enabled).toBe(false);
+    expect(reports.getCrashReports().enabled).toBe(false);
+  });
+});
+
+// The box is the consent of the user: it must not show the opposite of what the backend does. It did when the
+// backend was asked how its switch stands, the switch was turned, and the answer to the question - read before
+// the turn - arrived after the answer to the turn.
+describe("a look at the backend that is under way while the switch is turned", () => {
+  /** a look whose answer the backend has read, and which is not there until `arrive` is called */
+  function lookUnderWay(page: Page) {
+    let arrive = () => {};
+    page.waits.push(new Promise<void>((resolve) => (arrive = resolve)));
+    page.dispatch("focus");
+    return () => arrive();
+  }
+
+  it.each([
+    ["on", false, true],
+    ["off", true, false],
+  ])("does not put the box back: switched %s", async (_what, before, after) => {
+    const page = openPage();
+    if (before) page.stored.set(KEY, ON);
+    const reports = await start();
+    expect(reports.getCrashReports().enabled).toBe(before);
+    const arrive = lookUnderWay(page);
+    await settle();
+    page.calls.length = 0;
+
+    const turned = reports.setCrashReports(after);
+    await settle();
+    // the backend is told in its turn: not while the answer to the look is still on its way
+    expect(commands(page)).toEqual([]);
+    expect(reports.getCrashReports().enabled).toBe(before);
+    arrive();
+    await turned;
+    await settle();
+    expect(page.calls).toEqual([["set_crash_reports", { enabled: after }]]);
+    expect(page.backend.enabled).toBe(after);
+    expect(reports.getCrashReports().enabled).toBe(after);
+    expect(page.stored.get(KEY)).toBe(after ? ON : undefined);
+  });
+
+  it("waits for the first look, which switches the backend on: a window gets the focus as it starts", async () => {
+    const page = openPage();
+    page.stored.set(KEY, ON);
+    let arrive = () => {};
+    // the second question about the state is the one whose answer takes its time
+    page.waits.push(null, new Promise<void>((resolve) => (arrive = resolve)));
+    vi.resetModules();
+    const reports = await import("./crashReports");
+    reports.startCrashReports("main");
+    page.dispatch("focus");
+    await settle();
+    // asked after the backend was switched on, not before: "off" would arrive late and untick the box
+    expect(page.calls).toEqual([
+      ["crash_reports_state", undefined],
+      ["set_crash_reports", { enabled: true }],
+      ["crash_reports_state", undefined],
+    ]);
+    expect(reports.getCrashReports().enabled).toBe(true);
+    arrive();
+    await settle();
+    expect(page.backend.enabled).toBe(true);
+    expect(reports.getCrashReports().enabled).toBe(true);
+  });
+
+  it("still lets go the errors of the first moments, and what comes after a failure", async () => {
+    const page = openPage();
+    page.stored.set(KEY, ON);
+    let arrive = () => {};
+    page.waits.push(new Promise<void>((resolve) => (arrive = resolve)));
+    vi.resetModules();
+    const reports = await import("./crashReports");
+    reports.startCrashReports("main");
+    page.dispatch("error", { error: new Error("at start") });
+    page.dispatch("focus");
+    await settle();
+    expect(page.reports()).toEqual([]);
+    arrive();
+    await settle();
+    expect(page.reports().map((r) => r.message)).toEqual(["at start"]);
+    // a question that fails does not hold up the ones behind it
+    page.failing.add("set_crash_reports");
+    await expect(reports.setCrashReports(false)).rejects.toBe("set_crash_reports failed");
+    page.failing.clear();
+    await reports.setCrashReports(false);
     expect(page.backend.enabled).toBe(false);
     expect(reports.getCrashReports().enabled).toBe(false);
   });

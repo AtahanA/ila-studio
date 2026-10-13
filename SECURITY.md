@@ -70,11 +70,12 @@ or a `.ila`: the text it unpacks to). A probe file is read whole, and only up to
   when it notices the change: at the latest when its window next gets the focus.
 - A report holds the error text and where in the program it happened, the time, the versions of the program
   and of Windows, the processor architecture and the Rust version of the build. It holds no captures, profiles,
-  logs, probe files or settings as such, and not the name of the PC as the reporting library would add it (a
-  name inside an error text stays, see below). The names of user folders, the server of a network path and
-  IPv4 addresses are taken out of its texts, where they stand in their usual notation. **Other names are not
-  recognised and are sent as they stand in the error text**: a probe name, a file or folder name, a host
-  called by its name, a user name that stands alone. The
+  logs, probe files or settings as such, and not the name of the PC as the reporting library would add it.
+  The names of user folders, the server of a network path, the names of this PC and of its Windows user
+  (from four characters on, where they stand as words of their own) and IP addresses are taken out of its
+  texts, where they stand in their usual notation. **Other names are not recognised and are sent as they
+  stand in the error text**: a probe name, a file or folder name, another host called by its name, the name
+  of another user that stands alone. The
   [README](README.md#crash-reports-optional-off-by-default) lists what a report holds, which notations are
   recognised, and which are known not to be.
 - `ILA_SENTRY_DSN`, set in the environment the program is started from, replaces the report address with the
