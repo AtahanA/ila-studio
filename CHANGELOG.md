@@ -25,5 +25,6 @@ First public release.
 - Command line `ila_capture.py`: `check`, `info`, `capture`, `watch`, `hook`, `convert`, `stats`, `summary`.
 - Demo data for trying the interface without hardware.
 - Optional crash reports through Sentry, off until switched on in the header: an error of the program is
-  sent with user folders and IPv4 addresses taken out of its text. A build from source has no report address.
+  sent with user folders, the servers of network paths and IPv4 addresses taken out of its text. The choice
+  holds for one report server; a build from source has no report address.
 - Release archives built by a GitHub workflow from the tag, with `THIRD-PARTY-NOTICES.md` and a SHA-256 sum.

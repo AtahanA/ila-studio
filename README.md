@@ -144,8 +144,13 @@ remembers its last settings in the WebView storage of the application under `%LO
 
 ILA Studio can report its own errors to its developers through [Sentry](https://sentry.io), an error-collecting
 service. **Nothing is sent unless you switch this on.** The bug button in the header of the main window opens a
-panel with the box **Send crash reports**; the choice is remembered on this PC and is taken back in the same
-place.
+panel with the box **Send crash reports**; the choice is remembered on this PC, together with the server it was
+made for, and is taken back in the same place.
+
+Unticking the box holds from that moment: no error is reported any more, and a report that was still waiting
+to be sent is not sent. Only a report whose transfer had already begun is completed; it is given up after 15
+seconds. The pop-out window follows at once. Another copy of the program that runs at the same time follows
+when it notices the change, at the latest when its window next gets the focus.
 
 While it is on, a report is sent when the program runs into an error: an error of the page that nothing caught,
 an error while a window is drawn, or a crash (panic) of the backend. A report contains:
@@ -155,33 +160,67 @@ an error while a window is drawn, or a crash (panic) of the backend. A report co
   in its code (for an error while a window is drawn, also the components that were being drawn);
 - the time, a random id, the version of ILA Studio and whether it is a release or a development build, the
   version of Windows, the processor architecture (`x86_64`), the Rust version the program was built with, the
-  name and version of the reporting library, and which window it was (main or analysis).
+  name and version of the reporting library, and which window it was (main or analysis);
+- a few fixed technical labels (the platform, the severity, how the error was caught, the parts of the
+  reporting library in use), and for a crash of the backend two more random ids.
 
-It never contains captures, profiles, `ila_log.txt`, the probe file, your settings or what you did before the
-error. The name of the PC, which the reporting library would add, is removed.
+The request that carries a report also names the HTTP library, the public key of the report address and the
+time the program was started. That time is the same in every report of a run: it tells the receiver which
+reports belong together and how long the program had been running.
 
-Before a report leaves, three things are taken out of every text in it: the name of a user folder
-(`C:\Users\<name>\...`, `/home/<name>/...`), the server of a network path (`\\server\share\...`) and IPv4
-addresses. A text is cut after 2,000 characters. **Other names are not recognised**: an error text can contain
-the name of a probe, of a file or a folder, or of a host that is called by its name - whatever the failing step
-was working with. That is why crash reports are off by default. Leave them off where such names must not
-leave the building.
+It never contains captures, profiles, `ila_log.txt`, the probe file or your settings as such, nor what you did
+before the error. A single value of them can be part of an error text: the path of the probe file, the
+hw_server address. The name of the PC, which the reporting library would add, is removed; a name that stands
+inside an error text is a text like any other (see below).
+
+Before a report leaves, three things are taken out of every text in it:
+
+- the name of a user folder, which is the folder below `Users` or `home`: `C:\Users\<name>\...`,
+  `/home/<name>/...`, also on a share (`\\server\home$\<name>\...`);
+- the server of a network path: `\\server\share\...`, `//server/share/...`, `\\?\UNC\server\share\...`,
+  `file://server/share/...`;
+- IPv4 addresses (a port behind one stays).
+
+A text is cut after 2,000 characters. **Nothing else is recognised.** Sent as they stand in an error text:
+
+- the name of a probe, of a file or of a folder - whatever the failing step was working with;
+- a host that is called by its name, also in a URL (`http://host/...`); a server named without a share
+  (`\\server`), or in a path written directly behind a word, with no space or quote between
+  (`-o\\server\share`);
+- a user name or a PC name that stands alone, and a user folder that is not below `Users` or `home`
+  (`D:\Profiles\<name>`);
+- a path in another notation, such as URL-encoded (`C%3A%5CUsers%5C<name>`);
+- IPv6 addresses, and an IPv4 address that reads as a part of a version number: inside a longer row of
+  numbers (`1.2.3.4.5`, so also an address with a port below 256 written behind a dot) or behind a `v`
+  (`v1.2.3.4`).
+
+That is why crash reports are off by default. Leave them off where such names must not leave the building.
 
 - **Where reports go.** The panel names the server. A build from source has no report address and cannot send
   ("This build has no address to send reports to."), unless the environment variable `ILA_SENTRY_DSN` held one
-  while the program was built.
+  while the program was built, or names one when it is started.
 - **A Sentry of your own.** Set `ILA_SENTRY_DSN` to the DSN of your Sentry project before you start the program:
   reports then go there, and nowhere else. Set to a text that is no DSN (`ILA_SENTRY_DSN=off`), it leaves the
-  program without a report address: crash reports cannot be switched on at all.
+  program without a report address: crash reports cannot be switched on at all. An address that begins with
+  `http://` is accepted, for a Sentry inside your own network: reports to it are **not encrypted**, and the
+  panel says so (unless the address is on this PC).
+- **The choice belongs to the server.** It is remembered together with the address it was made for: scheme,
+  host, port and project. If the program is later started with another report address - a different
+  `ILA_SENTRY_DSN`, or none any more - crash reports are off, the remembered choice is dropped, and they stay
+  off until you tick the box again. One choice is remembered for each Windows user: of two copies of the
+  program that run with different report addresses, only one can have the box ticked.
 - **One report by hand.** While crash reports are off, the error screen of a window ("ILA Studio ran into an
-  error and cannot show this window.") offers **Send this error report**, which sends that one error. A build
-  without a report address has no such button.
+  error and cannot show this window.") offers **Send this error report**, which sends that one error. A run
+  of the program sends two such reports at most. A build without a report address has no such button.
 - **Send a test report** in the panel sends one report that says only "ILA Studio test report", and shows the id
   it has on the server, or why it did not arrive.
 
-Like any server, the one that receives a report sees the IP address it comes from. A report is sent by the
-backend of the program, not by its page, with the TLS of Windows and the certificates Windows trusts; a proxy
-named in `ALL_PROXY`, `HTTPS_PROXY` or `HTTP_PROXY` is used.
+Like any server, the one that receives a report sees the IP address it comes from, and a Sentry server may
+store it with the report. A report is sent by the backend of the program, not by its page, on a connection of
+its own that is closed with the answer of the server. To an address that begins with `https://` it is sent
+with the TLS of Windows and the certificates Windows trusts. A proxy named in `ALL_PROXY`, `HTTPS_PROXY` or
+`HTTP_PROXY` is used; the proxy of the Windows settings is not, so on a network that reaches the internet only
+through that one, reports do not arrive.
 
 ## Profiles
 

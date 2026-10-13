@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Atahan Aggunlu
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { describeError, isBenign } from "./crashReports";
+import { consentFor, describeError, isBenign } from "./crashReports";
 
 describe("describeError", () => {
   it("takes message and stack of an Error", () => {
@@ -44,6 +44,44 @@ describe("isBenign", () => {
   });
 });
 
+// The address the stand-in for the backend reports to, as the backend names it (without the key), and what the
+// page stores when the box is ticked for it.
+const DESTINATION = "https://reports.example.org:443/1";
+const ON = `on ${DESTINATION}`;
+
+describe("consentFor", () => {
+  it("holds for the address the box was ticked for", () => {
+    expect(consentFor(ON, DESTINATION)).toBe(true);
+    expect(consentFor("on http://127.0.0.1:9000/2", "http://127.0.0.1:9000/2")).toBe(true);
+  });
+
+  it("does not hold for another server, port, project or scheme", () => {
+    expect(consentFor(ON, "https://sentry.example.net:443/1")).toBe(false);
+    expect(consentFor(ON, "https://reports.example.org:8443/1")).toBe(false);
+    expect(consentFor(ON, "https://reports.example.org:443/2")).toBe(false);
+    expect(consentFor(ON, "https://reports.example.org:443/11")).toBe(false);
+    expect(consentFor(ON, "http://reports.example.org:443/1")).toBe(false);
+    expect(consentFor(ON, "https://reports.example.org:443/behind/1")).toBe(false);
+  });
+
+  it("does not hold in a program that has no address now", () => {
+    expect(consentFor(ON, null)).toBe(false);
+    expect(consentFor("on ", "")).toBe(false);
+    expect(consentFor("on null", null)).toBe(false);
+  });
+
+  it("is not given by the bare value an earlier version stored, nor by anything else", () => {
+    expect(consentFor("on", DESTINATION)).toBe(false);
+    expect(consentFor("on ", DESTINATION)).toBe(false);
+    expect(consentFor("true", DESTINATION)).toBe(false);
+    expect(consentFor(DESTINATION, DESTINATION)).toBe(false);
+    expect(consentFor(`ON ${DESTINATION}`, DESTINATION)).toBe(false);
+    expect(consentFor(`${ON} `, DESTINATION)).toBe(false);
+    expect(consentFor(null, DESTINATION)).toBe(false);
+    expect(consentFor(null, null)).toBe(false);
+  });
+});
+
 // What the module keeps lives in the module, so every case loads crashReports.ts anew - into a page that is no
 // more than what the module touches (the storage, the events of the window) and with a stand-in for the backend.
 const KEY = "ila-studio-crash-reports";
@@ -55,7 +93,14 @@ interface Page {
   /** the commands the page has called, in order */
   calls: [string, unknown][];
   /** the backend: what it would answer to crash_reports_state, and to an error handed over */
-  backend: { available: boolean; enabled: boolean; server: string | null; ownServer: boolean };
+  backend: {
+    available: boolean;
+    enabled: boolean;
+    server: string | null;
+    ownServer: boolean;
+    destination: string | null;
+    unencrypted: boolean;
+  };
   outcome: string;
   /** commands that fail from now on */
   failing: Set<string>;
@@ -69,7 +114,14 @@ function openPage(): Page {
     stored: new Map(),
     refuses: "nothing",
     calls: [],
-    backend: { available: true, enabled: false, server: "reports.example.org", ownServer: false },
+    backend: {
+      available: true,
+      enabled: false,
+      server: "reports.example.org",
+      ownServer: false,
+      destination: DESTINATION,
+      unencrypted: false,
+    },
     outcome: "sent",
     failing: new Set(),
     dispatch: (type, fields = {}) => void events.dispatchEvent(Object.assign(new Event(type), fields)),
@@ -124,6 +176,14 @@ async function start(name: "main" | "analysis" = "main") {
 
 const commands = (page: Page) => page.calls.map(([command]) => command);
 const lastCall = (page: Page) => page.calls[page.calls.length - 1];
+const NO_ADDRESS = {
+  available: false,
+  enabled: false,
+  server: null,
+  ownServer: false,
+  destination: null,
+  unencrypted: false,
+};
 
 afterEach(() => {
   vi.doUnmock("@tauri-apps/api/core");
@@ -139,6 +199,8 @@ describe("startCrashReports", () => {
       enabled: false,
       server: "reports.example.org",
       ownServer: false,
+      destination: DESTINATION,
+      unencrypted: false,
     });
     page.dispatch("error", { error: new Error("boom"), message: "Uncaught Error: boom" });
     page.dispatch("unhandledrejection", { reason: "rejected" });
@@ -147,47 +209,82 @@ describe("startCrashReports", () => {
     expect(page.stored.size).toBe(0);
   });
 
-  it("switches the backend on when the user had switched crash reports on", async () => {
+  it("switches the backend on when the user had switched crash reports on, for this address", async () => {
     const page = openPage();
-    page.stored.set(KEY, "on");
+    page.stored.set(KEY, ON);
     const reports = await start();
     expect(page.calls).toEqual([
       ["crash_reports_state", undefined],
       ["set_crash_reports", { enabled: true }],
     ]);
     expect(reports.getCrashReports().enabled).toBe(true);
+    expect(page.stored.get(KEY)).toBe(ON);
   });
 
-  it("takes only the value it writes for a yes", async () => {
+  // The box was ticked while reports went to one server; this start has another - a different ILA_SENTRY_DSN, or
+  // none any more, and so the address of the build. Nobody was asked about that one.
+  it.each([
+    ["another server", "https://sentry.example.net:443/1"],
+    ["another project of the same server", "https://reports.example.org:443/2"],
+    ["the same server without encryption", "http://reports.example.org:443/1"],
+  ])("stays off when the choice was made for %s, and forgets it", async (_what, earlier) => {
     const page = openPage();
-    page.stored.set(KEY, "true");
+    page.stored.set(KEY, `on ${earlier}`);
     const reports = await start();
     expect(commands(page)).toEqual(["crash_reports_state"]);
     expect(reports.getCrashReports().enabled).toBe(false);
+    expect(page.backend.enabled).toBe(false);
+    expect(page.stored.size).toBe(0);
+    page.dispatch("error", { error: new Error("boom") });
+    await settle();
+    expect(page.reports()).toEqual([]);
+    // the box ticked again, now for this address
+    await reports.setCrashReports(true);
+    expect(page.stored.get(KEY)).toBe(ON);
+  });
+
+  it("takes only the value it writes for a yes: not the bare one of an earlier version, which named no address", async () => {
+    for (const value of ["on", "true", "", DESTINATION]) {
+      const page = openPage();
+      page.stored.set(KEY, value);
+      const reports = await start();
+      expect(commands(page)).toEqual(["crash_reports_state"]);
+      expect(reports.getCrashReports().enabled).toBe(false);
+      expect(page.stored.size).toBe(0);
+    }
   });
 
   it("does not switch on what a build without a report address cannot send", async () => {
     const page = openPage();
-    page.backend = { available: false, enabled: false, server: null, ownServer: false };
-    page.stored.set(KEY, "on");
+    page.backend = { ...NO_ADDRESS };
+    page.stored.set(KEY, ON);
     const reports = await start();
     expect(commands(page)).toEqual(["crash_reports_state"]);
-    expect(reports.getCrashReports()).toEqual({ available: false, enabled: false, server: null, ownServer: false });
+    expect(reports.getCrashReports()).toEqual(NO_ADDRESS);
     page.dispatch("error", { error: new Error("boom") });
     await settle();
     expect(await reports.reportError(new Error("boom"), "render", { once: true })).toBe("unavailable");
     await reports.setCrashReports(true);
     expect(commands(page)).toEqual(["crash_reports_state"]);
-    expect(page.stored.get(KEY)).toBe("on"); // left as it was: the choice holds for a build that can send
+    // Changed on purpose (it was left as it was, to hold again in a build that can send): the choice was made
+    // for an address, and a start without that address ends it like a start with another one.
+    expect(page.stored.size).toBe(0);
   });
 
   it("stays off when the storage cannot be read", async () => {
     const page = openPage();
-    page.stored.set(KEY, "on");
+    page.stored.set(KEY, ON);
     page.refuses = "everything";
     const reports = await start();
     expect(commands(page)).toEqual(["crash_reports_state"]);
     expect(reports.getCrashReports().enabled).toBe(false);
+    // and when it cannot be written: the choice for another address cannot be removed, and is still not taken
+    const other = openPage();
+    other.stored.set(KEY, "on https://sentry.example.net:443/1");
+    other.refuses = "writing";
+    const again = await start();
+    expect(commands(other)).toEqual(["crash_reports_state"]);
+    expect(again.getCrashReports().enabled).toBe(false);
   });
 
   it("takes over a switch that is on in the backend already: the other window of this run turned it", async () => {
@@ -220,7 +317,7 @@ describe("startCrashReports", () => {
 describe("uncaught errors, while crash reports are on", () => {
   async function startOn(name: "main" | "analysis" = "main") {
     const page = openPage();
-    page.stored.set(KEY, "on");
+    page.stored.set(KEY, ON);
     const reports = await start(name);
     page.calls.length = 0;
     return { page, reports };
@@ -274,11 +371,21 @@ describe("uncaught errors, while crash reports are on", () => {
 
   it("cuts a text that is too long to cross to the backend", async () => {
     const { page } = await startOn();
-    page.dispatch("error", { error: { message: "m".repeat(5000), stack: "s".repeat(30000) } });
+    page.dispatch("error", { error: { message: "m".repeat(9000), stack: "s".repeat(30000) } });
     await settle();
     const [report] = page.reports();
-    expect((report.message as string).length).toBe(4000);
+    // Changed on purpose (it was 4000): the backend takes names and addresses out before it cuts a message to
+    // the 2,000 characters a report carries, and a path that the page has cut is not recognised there.
+    expect((report.message as string).length).toBe(8000);
     expect((report.stack as string).length).toBe(20000);
+  });
+
+  it("hands a message of 5000 characters over whole: the backend cuts it, after it has scrubbed it", async () => {
+    const { page } = await startOn();
+    const message = `${"m".repeat(4990)} \\\\labserver\\designs\\top.ltx`;
+    page.dispatch("error", { error: { message } });
+    await settle();
+    expect(page.reports()[0].message).toBe(message);
   });
 
   it("stops when crash reports are switched off", async () => {
@@ -301,7 +408,7 @@ describe("errors of the first moments", () => {
 
   it("are handed over once the backend has said that crash reports are on", async () => {
     const page = openPage();
-    page.stored.set(KEY, "on");
+    page.stored.set(KEY, ON);
     await startUnsettled();
     page.dispatch("error", { error: new Error("at start") });
     expect(page.reports()).toEqual([]);
@@ -317,9 +424,18 @@ describe("errors of the first moments", () => {
     expect(page.reports()).toEqual([]);
   });
 
+  it("are dropped when the stored choice was made for another address", async () => {
+    const page = openPage();
+    page.stored.set(KEY, "on https://sentry.example.net:443/1");
+    await startUnsettled();
+    page.dispatch("error", { error: new Error("at start") });
+    await settle();
+    expect(page.reports()).toEqual([]);
+  });
+
   it("are no more than five", async () => {
     const page = openPage();
-    page.stored.set(KEY, "on");
+    page.stored.set(KEY, ON);
     await startUnsettled();
     for (let i = 0; i < 8; i++) page.dispatch("error", { error: new Error(`at start ${i}`) });
     await settle();
@@ -336,7 +452,8 @@ describe("setCrashReports", () => {
 
     await reports.setCrashReports(true);
     expect(lastCall(page)).toEqual(["set_crash_reports", { enabled: true }]);
-    expect([...page.stored]).toEqual([[KEY, "on"]]);
+    // with the address the box was ticked for (it was a bare "on": see consentFor)
+    expect([...page.stored]).toEqual([[KEY, ON]]);
     expect(reports.getCrashReports().enabled).toBe(true);
     expect(heard).toHaveBeenCalledTimes(1);
 
@@ -362,6 +479,12 @@ describe("setCrashReports", () => {
     expect(reports.getCrashReports().enabled).toBe(true);
     expect(page.backend.enabled).toBe(true);
     expect(page.stored.size).toBe(0);
+    // and it lasts: a storage that never said "on" has not stopped saying it (see "another running copy")
+    page.dispatch("focus");
+    page.dispatch("storage", { key: KEY });
+    await settle();
+    expect(reports.getCrashReports().enabled).toBe(true);
+    expect(page.backend.enabled).toBe(true);
   });
 
   it("changes nothing when the backend cannot be told", async () => {
@@ -371,6 +494,28 @@ describe("setCrashReports", () => {
     await expect(reports.setCrashReports(true)).rejects.toBe("set_crash_reports failed");
     expect(reports.getCrashReports().enabled).toBe(false);
     expect(page.stored.size).toBe(0);
+  });
+
+  it("removes the stored choice before the backend is told to switch off, and even if it cannot be told", async () => {
+    const page = openPage();
+    page.stored.set(KEY, ON);
+    const reports = await start();
+    page.failing.add("set_crash_reports");
+    await expect(reports.setCrashReports(false)).rejects.toBe("set_crash_reports failed");
+    // gone for the next start, and for a window that starts in this moment: it must not switch on again
+    expect(page.stored.size).toBe(0);
+    // the backend is still on, and the page does not say otherwise
+    expect(page.backend.enabled).toBe(true);
+    expect(reports.getCrashReports().enabled).toBe(true);
+    // every look tells it again, until it can be told
+    page.dispatch("focus");
+    await settle();
+    expect(page.backend.enabled).toBe(true);
+    page.failing.clear();
+    page.dispatch("focus");
+    await settle();
+    expect(page.backend.enabled).toBe(false);
+    expect(reports.getCrashReports().enabled).toBe(false);
   });
 });
 
@@ -383,7 +528,7 @@ describe("the other window", () => {
 
     // the other window has switched crash reports on
     page.backend.enabled = true;
-    page.stored.set(KEY, "on");
+    page.stored.set(KEY, ON);
     page.dispatch("storage", { key: "some-other-key" });
     await settle();
     expect(reports.getCrashReports().enabled).toBe(false);
@@ -402,7 +547,7 @@ describe("the other window", () => {
 
   it("does not turn the backend on again from a storage that still says on", async () => {
     const page = openPage();
-    page.stored.set(KEY, "on");
+    page.stored.set(KEY, ON);
     const reports = await start();
     // the other window switched off, and its storage could not be written
     page.backend.enabled = false;
@@ -410,6 +555,82 @@ describe("the other window", () => {
     await settle();
     expect(reports.getCrashReports().enabled).toBe(false);
     expect(page.backend.enabled).toBe(false);
+  });
+});
+
+// Two copies of the program run on one PC (two boards): they share the storage of the page, and each has a
+// backend of its own. The box of the one is the box of the other.
+describe("another running copy of the program", () => {
+  it.each([
+    ["the storage changes", "storage", { key: KEY }],
+    ["the storage is cleared", "storage", { key: null }],
+    ["this window gets the focus", "focus", {}],
+  ])("switches this backend off when the box was unticked there and %s", async (_when, event, fields) => {
+    const page = openPage();
+    page.stored.set(KEY, ON);
+    const reports = await start();
+    expect(page.backend.enabled).toBe(true);
+    page.calls.length = 0;
+
+    page.stored.delete(KEY);
+    page.dispatch(event, fields);
+    await settle();
+    expect(page.calls).toEqual([
+      ["set_crash_reports", { enabled: false }],
+      ["crash_reports_state", undefined],
+    ]);
+    expect(page.backend.enabled).toBe(false);
+    expect(reports.getCrashReports().enabled).toBe(false);
+    page.dispatch("error", { error: new Error("after the box was unticked in the other copy") });
+    await settle();
+    expect(page.reports()).toEqual([]);
+
+    // told once: the next look only asks
+    page.calls.length = 0;
+    page.dispatch("focus");
+    await settle();
+    expect(commands(page)).toEqual(["crash_reports_state"]);
+  });
+
+  it("switches this backend off when the stored choice is now one for another address", async () => {
+    const page = openPage();
+    page.stored.set(KEY, ON);
+    const reports = await start();
+    // a copy that reports elsewhere was started, found a choice that was not made for its address and removed
+    // it - or its box was ticked: either way the storage no longer says "on" for the address of this copy
+    page.stored.set(KEY, "on https://sentry.example.net:443/1");
+    page.dispatch("storage", { key: KEY });
+    await settle();
+    expect(page.backend.enabled).toBe(false);
+    expect(reports.getCrashReports().enabled).toBe(false);
+  });
+
+  it("is never switched on from here: a box ticked there does not tick this one", async () => {
+    const page = openPage();
+    const reports = await start();
+    page.stored.set(KEY, ON);
+    page.dispatch("storage", { key: KEY });
+    page.dispatch("focus");
+    await settle();
+    expect(commands(page)).toEqual(["crash_reports_state", "crash_reports_state", "crash_reports_state"]);
+    expect(page.backend.enabled).toBe(false);
+    expect(reports.getCrashReports().enabled).toBe(false);
+    // ticked there, unticked there: this copy, which was off all the time, is told so again and stays off
+    page.stored.delete(KEY);
+    page.dispatch("storage", { key: KEY });
+    await settle();
+    expect(page.backend.enabled).toBe(false);
+  });
+
+  it("leaves this backend as it is while the storage cannot be read", async () => {
+    const page = openPage();
+    page.stored.set(KEY, ON);
+    const reports = await start();
+    page.refuses = "everything";
+    page.dispatch("focus");
+    await settle();
+    expect(page.backend.enabled).toBe(true);
+    expect(reports.getCrashReports().enabled).toBe(true);
   });
 });
 
@@ -433,7 +654,7 @@ describe("reportError", () => {
 
   it("passes on what the backend made of it", async () => {
     const page = openPage();
-    page.stored.set(KEY, "on");
+    page.stored.set(KEY, ON);
     const reports = await start();
     page.outcome = "duplicate";
     expect(await reports.reportError(new Error("boom"), "render")).toBe("duplicate");

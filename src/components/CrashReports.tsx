@@ -13,7 +13,7 @@ type TestResult = { state: "sending" } | { state: "sent"; id: string } | { state
  * switched on.
  */
 export const CrashReports: React.FC = () => {
-  const { available, enabled, server, ownServer } = useCrashReports();
+  const { available, enabled, server, ownServer, unencrypted } = useCrashReports();
   const [open, setOpen] = useState(false);
   const [test, setTest] = useState<TestResult | null>(null);
   const rootRef = useRef<HTMLSpanElement | null>(null);
@@ -79,16 +79,23 @@ export const CrashReports: React.FC = () => {
             the log or the probe file.
           </p>
           <p>
-            The names of user folders, the server of a network path and IPv4 addresses are taken out of the text.
-            Other names are not recognised: an error text can hold the name of a probe, a file or a host. That is
-            why this is off until you switch it on.
+            The names of user folders, the server of a network path and IPv4 addresses are taken out of the text
+            where they stand in their usual notation. Other names are not recognised: an error text can hold the
+            name of a probe, a file or a host. That is why this is off until you switch it on.
           </p>
           {server && (
             <p>
               {ownServer
                 ? "Reports go to the server named in ILA_SENTRY_DSN: "
                 : "Reports go to the Sentry project of the developers: "}
-              <span className="crash-reports-server">{server}</span>
+              <span className="crash-reports-server">{server}</span>. Your choice is remembered for this address
+              only.
+            </p>
+          )}
+          {/* not said of an address on this PC (127.0.0.1): what is sent there crosses no network */}
+          {unencrypted && (
+            <p className="crash-reports-missing">
+              This address begins with http://: reports are sent to it without encryption.
             </p>
           )}
           <div className="crash-reports-test">
