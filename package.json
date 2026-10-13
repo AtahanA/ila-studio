@@ -31,7 +31,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vitest run",
+    "test": "vitest run --dir src",
     "tauri": "tauri"
   },
   "dependencies": {

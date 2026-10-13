@@ -26,8 +26,8 @@ clock. A **capture** is one filled buffer of one ILA core. The **program folder*
 
 ## The window
 
-- **Header**: the Profile list with **Save**, the status line, the theme button (sun / moon),
-  **View Log (.txt)** and **Demo Data**.
+- **Header**: the Profile list with **Save**, the status line, the theme button (sun / moon), the crash
+  reports button (a bug), **View Log (.txt)** and **Demo Data**.
 - **Two tabs**: "ILA Capture & Trigger Rules" (hardware, trigger, probes and the waveform viewer) and "Signal
   Analysis".
 - **Bar at the bottom**: **Capture Name**, **Open File**, the capture button (its label follows the capture
@@ -44,6 +44,24 @@ Every click writes a new file `captures\demo_ila_<date>_<time>.csv`.
 
 If a window cannot be drawn because of an error in the program, it says "ILA Studio ran into an error and
 cannot show this window.", shows the error as text that can be copied, and offers **Reload**.
+
+**Crash reports** are off until you switch them on. The bug button in the header opens a panel:
+
+- **Send crash reports**: while the box is ticked, an error of the program - in either window, or in the
+  backend - is reported to the server the panel names. A report holds the error text and where in the program
+  it happened, the version of the program and of Windows. It never holds captures, profiles, the log or the
+  probe file. The names of user folders, the server of a network path and IPv4 addresses are taken out of the
+  text; a probe name, a file name or a host name inside an error text is not recognised and is sent. The same
+  message is reported once in a run, and a run reports twenty errors of the page at most.
+- **Send a test report** (while the box is ticked) sends one report that says "ILA Studio test report" and
+  shows its id, or why it did not arrive.
+- "This build has no address to send reports to." with a greyed box: the program has no report address, as a
+  build from source has none unless it was given one. Nothing can be sent.
+
+While crash reports are off, the error screen described above has a button **Send this error report**, which
+sends that one error (not in a program without a report address). The
+[project page](../README.md#crash-reports-optional-off-by-default) lists what a report contains and how to send
+reports to a Sentry of your own.
 
 ## Probe file, hw_server and JTAG
 
@@ -401,7 +419,8 @@ you pass it on. Only the two shipped example profiles are tracked by git.
 The page stores the following on this PC (in the storage of the application's WebView, not in the program
 folder): the hardware fields of the last session (hw_server, probe file, Tcl script, device filter, JTAG
 clock), the selected profile, the selected ILA core, Twin Turbo, the number formats chosen for each probe
-file, the layout of the analysis plots, the "const" switch and the theme.
+file, the layout of the analysis plots, the "const" switch, the theme and whether crash reports are switched
+on.
 
 - **The first start** (nothing stored yet) opens on "-- Custom Configuration --" with hw_server
   `127.0.0.1:3121`. A profile is applied by itself only if the probe file of a profile in `profiles\` exists on

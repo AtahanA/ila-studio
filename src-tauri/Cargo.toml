@@ -24,6 +24,19 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Crash reports, which the user switches on (src/crash_reports.rs). Only what an error event needs: the panic
+# hook, backtraces, the OS / Rust contexts, and a small blocking HTTP sender. Not the defaults: they add
+# sessions, logs, metrics and an async HTTP stack.
+sentry = { version = "0.49.3", default-features = false, features = ["backtrace", "contexts", "panic", "ureq"] }
+# The HTTP client sentry sends with (the same major version), named here to give it its TLS - that of Windows -
+# and to set it up in crash_reports.rs: the certificates Windows trusts, a time limit, a look at the answer of
+# the server. Not "native-tls-no-default": ureq 3.4 builds its Windows TLS only with the full feature, and
+# stops with a panic at the first https address without it.
+ureq = { version = "3.4", default-features = false, features = ["native-tls"] }
+
+[dev-dependencies]
+# sentry::test: the tests look at the events the client would have sent, without a server
+sentry = { version = "0.49.3", default-features = false, features = ["test"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

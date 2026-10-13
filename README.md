@@ -140,6 +140,49 @@ All of this is ignored by git; only the two shipped example profiles are tracked
 contain local paths, the hw_server address and probe names: **read them before you share them.** The page also
 remembers its last settings in the WebView storage of the application under `%LOCALAPPDATA%`.
 
+## Crash reports (optional, off by default)
+
+ILA Studio can report its own errors to its developers through [Sentry](https://sentry.io), an error-collecting
+service. **Nothing is sent unless you switch this on.** The bug button in the header of the main window opens a
+panel with the box **Send crash reports**; the choice is remembered on this PC and is taken back in the same
+place.
+
+While it is on, a report is sent when the program runs into an error: an error of the page that nothing caught,
+an error while a window is drawn, or a crash (panic) of the backend. A report contains:
+
+- the error text, the kind of error, and where in the program it happened: the stack, which is function
+  names, the paths of the program's own source files, line numbers and, for a crash of the backend, addresses
+  in its code (for an error while a window is drawn, also the components that were being drawn);
+- the time, a random id, the version of ILA Studio and whether it is a release or a development build, the
+  version of Windows, the processor architecture (`x86_64`), the Rust version the program was built with, the
+  name and version of the reporting library, and which window it was (main or analysis).
+
+It never contains captures, profiles, `ila_log.txt`, the probe file, your settings or what you did before the
+error. The name of the PC, which the reporting library would add, is removed.
+
+Before a report leaves, three things are taken out of every text in it: the name of a user folder
+(`C:\Users\<name>\...`, `/home/<name>/...`), the server of a network path (`\\server\share\...`) and IPv4
+addresses. A text is cut after 2,000 characters. **Other names are not recognised**: an error text can contain
+the name of a probe, of a file or a folder, or of a host that is called by its name - whatever the failing step
+was working with. That is why crash reports are off by default. Leave them off where such names must not
+leave the building.
+
+- **Where reports go.** The panel names the server. A build from source has no report address and cannot send
+  ("This build has no address to send reports to."), unless the environment variable `ILA_SENTRY_DSN` held one
+  while the program was built.
+- **A Sentry of your own.** Set `ILA_SENTRY_DSN` to the DSN of your Sentry project before you start the program:
+  reports then go there, and nowhere else. Set to a text that is no DSN (`ILA_SENTRY_DSN=off`), it leaves the
+  program without a report address: crash reports cannot be switched on at all.
+- **One report by hand.** While crash reports are off, the error screen of a window ("ILA Studio ran into an
+  error and cannot show this window.") offers **Send this error report**, which sends that one error. A build
+  without a report address has no such button.
+- **Send a test report** in the panel sends one report that says only "ILA Studio test report", and shows the id
+  it has on the server, or why it did not arrive.
+
+Like any server, the one that receives a report sees the IP address it comes from. A report is sent by the
+backend of the program, not by its page, with the TLS of Windows and the certificates Windows trusts; a proxy
+named in `ALL_PROXY`, `HTTPS_PROXY` or `HTTP_PROXY` is used.
+
 ## Profiles
 
 A profile is a JSON file with the set-up of one board: hw_server, probe file, trigger, capture settings. The
@@ -241,6 +284,9 @@ your own risk.
 
 ## Third-party software
 
-ILA Studio is built with [Tauri](https://tauri.app), [React](https://react.dev), [Vite](https://vite.dev) and
-[Lucide](https://lucide.dev) icons. Their licences, and those of the libraries they bring along, apply to
-binary distributions; see the release checklist in [CONTRIBUTING.md](CONTRIBUTING.md#release-checklist).
+ILA Studio is built with [Tauri](https://tauri.app), [React](https://react.dev), [Vite](https://vite.dev),
+[Lucide](https://lucide.dev) icons and, for the crash reports, the
+[Sentry SDK for Rust](https://github.com/getsentry/sentry-rust). Their licences, and those of the libraries they
+bring along, apply to binary distributions: every release archive holds `THIRD-PARTY-NOTICES.md`, which lists
+them with their licence texts. `python tools/third_party_notices.py` writes that file; see the release
+checklist in [CONTRIBUTING.md](CONTRIBUTING.md#release-checklist).

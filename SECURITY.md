@@ -55,9 +55,29 @@ Known gaps:
 
 ### Network
 
-- ILA Studio opens connections to one place only: the hw_server you name. It checks that the address answers;
-  then Vivado connects to it and, in hook mode, xsct. It has no telemetry and no update check, and its page
-  cannot load anything from the network. What Vivado itself sends, and what the WebView2 runtime of Windows sends, is not in the hands of this project.
+- ILA Studio opens connections to the hw_server you name. It checks that the address answers; then Vivado
+  connects to it and, in hook mode, xsct.
+- It connects to one other place, and only when both of these hold: **you have switched crash reports on**
+  (the bug button in the header; they are off by default), and the program has a report address (a build from
+  source has none, unless `ILA_SENTRY_DSN` was set while it was built). Then an error of the program is sent
+  to that Sentry server. While crash reports are off, nothing is sent to it and no connection to it is made,
+  not at start-up either. The one exception is yours to make: in a program that has a report address, the
+  error screen of a window has a button **Send this error report**, which sends that one error.
+- A report holds the error text and where in the program it happened, the time, the versions of the program
+  and of Windows, the processor architecture and the Rust version of the build. It holds no captures, profiles,
+  logs, probe files or settings, and not the name of the PC. The names of user folders, the server of a
+  network path and IPv4 addresses are taken out of its texts. **Other names are not recognised and are sent as
+  they stand in the error text**: a probe name, a file or folder name, a host called by its name. The
+  [README](README.md#crash-reports-optional-off-by-default) lists everything.
+- `ILA_SENTRY_DSN`, set in the environment the program is started from, replaces the report address with the
+  one it names: for a Sentry of your own. Set to a text that is no address (`ILA_SENTRY_DSN=off`), it takes the
+  report address away, and crash reports cannot be switched on. Whoever can set that variable decides where
+  reports go once you have switched them on; the panel behind the bug button shows the server.
+- Reports are sent by the backend with the TLS of Windows, checked against the certificates Windows trusts,
+  through the proxy named in `ALL_PROXY`, `HTTPS_PROXY` or `HTTP_PROXY` if there is one. The receiving server
+  sees the IP address a report comes from, as any server does.
+- There is no other telemetry and no update check, and the page cannot load anything from the network or send
+  anything itself. What Vivado itself sends, and what the WebView2 runtime of Windows sends, is not in the hands of this project.
 - The hw_server protocol is the one Vivado uses: plain TCP, with no authentication and no encryption. Whoever
   can reach that port can drive the JTAG chain, with or without this tool. Use it on networks you trust.
 
@@ -72,8 +92,8 @@ Known gaps:
 
 - `ila_log.txt`, the `session.log` of each capture folder and the saved profiles hold local paths, the
   hw_server address, device and cable names and probe names. Read them before you attach them to an issue.
-- The page remembers its last settings (among them the path of the probe file and the hw_server address) in
-  the WebView storage of the application under `%LOCALAPPDATA%`.
+- The page remembers its last settings (among them the path of the probe file and the hw_server address, and
+  whether crash reports are switched on) in the WebView storage of the application under `%LOCALAPPDATA%`.
 - Short-lived helper files are written to `%TEMP%`: a stop flag for a running job, and a small script for the
   cable repair.
 - The executable runs the `ila_bridge.py` it finds in its own folder. If there is none, it looks in the four

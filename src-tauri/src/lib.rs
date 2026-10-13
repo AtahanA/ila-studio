@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+mod crash_reports;
+
 // Every command below is `async` and does its work on the blocking thread pool. A plain (synchronous) Tauri
 // command runs on the main thread - the one that also runs the window - so a command that waits for Python or
 // Vivado there freezes the whole UI for as long as the child process takes.
@@ -1146,6 +1148,8 @@ async fn open_log_file() -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // before anything else, so that a panic anywhere below can be reported - if the user has switched that on
+    crash_reports::init();
     tauri::Builder::default()
         .manage(AppState::default())
         .plugin(tauri_plugin_dialog::init())
@@ -1171,6 +1175,9 @@ pub fn run() {
                 }
                 // and the session that was kept open between jobs: the bridge closes it when its input ends
                 shutdown_server(&hw.server, Duration::from_secs(12));
+                // Last, when the hardware is let go: a crash report that is still on its way out gets two
+                // seconds to leave. Usually none is, and this does not wait at all.
+                crash_reports::flush(Duration::from_secs(2));
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -1191,6 +1198,10 @@ pub fn run() {
             close_analysis_window,
             analysis_window_open,
             open_log_file,
+            crash_reports::crash_reports_state,
+            crash_reports::set_crash_reports,
+            crash_reports::report_frontend_error,
+            crash_reports::send_test_crash_report,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -402,6 +402,65 @@ body {
   padding: 8px 10px;
   align-self: stretch; /* no label to give it the height of its neighbours */
 }
+/* Crash reports: an icon button as the theme switch, and the panel it opens (CrashReports.tsx) */
+.crash-reports {
+  position: relative;
+  display: inline-flex;
+  align-self: stretch;
+}
+.crash-reports-btn {
+  padding: 8px 10px;
+}
+.crash-reports-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0; /* grows to the left: the button stands near the right edge of the window */
+  z-index: 40; /* as the Import menu */
+  width: 380px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-import);
+  font-size: 12px;
+  color: var(--text-muted);
+  user-select: text; /* the id of a test report is there to be copied */
+}
+.crash-reports-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-main);
+  cursor: pointer;
+}
+.crash-reports-missing {
+  color: var(--accent-amber);
+}
+.crash-reports-test {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.crash-reports-test .btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.crash-reports-server,
+.crash-reports-id {
+  font-family: var(--font-mono);
+  color: var(--text-main);
+  overflow-wrap: anywhere;
+}
+.crash-reports-failed {
+  color: var(--accent-danger);
+  overflow-wrap: anywhere;
+}
 
 /* Nav Tabs */
 .nav-tabs {
@@ -1444,6 +1503,17 @@ body {
 }
 .error-boundary p {
   color: var(--text-muted);
+}
+.error-boundary-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--text-muted);
+}
+.error-boundary-actions .btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 .error-boundary-details {
   align-self: stretch;

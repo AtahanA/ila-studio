@@ -64,6 +64,10 @@ jobs:
             ~/.cargo/git/db
             src-tauri/target
           key: cargo-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+      # The licence gate of a release (make_release.ps1 runs it again): a dependency whose licence may not go
+      # into a GPL-3.0-or-later program is stopped at its pull request, not at the tag.
+      - name: Licences of the dependencies
+        run: python tools/third_party_notices.py --check
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings

@@ -5,6 +5,7 @@ import React from "react";
 import { ProfileInfo } from "../types";
 import { setTheme, useTheme } from "../theme";
 import { Layers, FileText, Moon, Save, Sun } from "lucide-react";
+import { CrashReports } from "./CrashReports";
 import appIcon from "../assets/app-icon.svg";
 
 interface HeaderProps {
@@ -96,6 +97,8 @@ export const Header: React.FC<HeaderProps> = ({
         >
           {otherTheme === "dark" ? <Moon size={16} /> : <Sun size={16} />}
         </button>
+
+        <CrashReports />
 
         <button
           className="btn btn-outline"
