@@ -123,23 +123,40 @@ fn no_window(cmd: &mut Command) -> &mut Command {
     cmd
 }
 
-/// The folder that holds ila_bridge.py: next to the executable in a distribution, a few levels up in a
-/// development build, the working directory as a last resort.
+/// Where ila_bridge.py is looked for, in this order. The folder of the executable comes first: that is where
+/// the scripts are in a distribution, and by itself a release build looks nowhere else - a file of that name
+/// in a folder above it, or in the folder the program happened to be started from, is not its script and must
+/// not be run. An executable that is kept apart from its scripts is told their folder in ILA_HOME (run_gui.ps1
+/// does that for a local release build); only a full path counts there, a relative one would lead back to the
+/// working directory. A development build (target\debug) finds the repository by itself: in the four folders
+/// above the executable, then in the working directory and the folder above that.
+fn root_candidates(exe_dir: Option<&Path>, named: Option<&Path>, cwd: &Path, development: bool) -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    candidates.extend(exe_dir.map(Path::to_path_buf));
+    candidates.extend(named.filter(|dir| dir.is_absolute()).map(Path::to_path_buf));
+    if development {
+        if let Some(dir) = exe_dir {
+            candidates.extend(dir.ancestors().skip(1).take(4).map(Path::to_path_buf));
+        }
+        candidates.extend(cwd.ancestors().take(2).map(Path::to_path_buf));
+    }
+    candidates
+}
+
+/// The folder that holds ila_bridge.py (see root_candidates). Where none of them does, it is the folder the
+/// message about that names: the one of the executable in a release build, the working directory in a
+/// development build.
 fn project_root() -> PathBuf {
     static ROOT: OnceLock<PathBuf> = OnceLock::new();
     ROOT.get_or_init(|| {
-        let mut candidates: Vec<PathBuf> = Vec::new();
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                candidates.extend(dir.ancestors().take(5).map(Path::to_path_buf));
-            }
-        }
+        let exe_dir = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf));
+        let named = std::env::var_os("ILA_HOME").map(PathBuf::from);
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        candidates.extend(cwd.ancestors().take(2).map(Path::to_path_buf));
-        candidates
+        let development = cfg!(debug_assertions);
+        root_candidates(exe_dir.as_deref(), named.as_deref(), &cwd, development)
             .into_iter()
             .find(|c| c.join("ila_bridge.py").is_file())
-            .unwrap_or(cwd)
+            .unwrap_or(if development { cwd } else { exe_dir.unwrap_or(cwd) })
     })
     .clone()
 }
@@ -151,15 +168,112 @@ fn python_exe() -> Result<PathBuf, String> {
     static PYTHON: Mutex<Option<PathBuf>> = Mutex::new(None);
     let mut found = PYTHON.lock().unwrap_or_else(|e| e.into_inner());
     if found.is_none() {
-        *found = Some(find_python()?);
+        let python = find_python()?;
+        // Once in a run of the program: which interpreter runs the scripts is what a fault of the hardware path
+        // may come down to, and nothing else in the log says it.
+        append_log(&project_root().join("ila_log.txt"), &python.asked, &python.note());
+        *found = Some(python.exe);
     }
     Ok(found.clone().expect("set above"))
 }
 
-fn find_python() -> Result<PathBuf, String> {
-    let mut candidates: Vec<(PathBuf, Vec<&str>)> = Vec::new();
+/// What a candidate is asked. An old interpreter fails at the assert, so that one which happens to come first
+/// on PATH is not chosen; any other says where it really is, what build it is, and the time for its line in the
+/// log - that is written in local time, which the standard library of Rust does not know.
+const PYTHON_PROBE: &str = "import sys; assert sys.version_info >= (3, 8); import sysconfig, datetime; \
+    print(sys.executable); print(sysconfig.get_platform()); print(sys.platform); print(sys.version.split()[0]); \
+    print(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])";
+
+/// How long a candidate may take to answer. It runs while python_exe holds its lock, with every other command
+/// waiting behind it; a launcher stub or a first start under a virus scanner takes seconds, not this long.
+const PROBE_LIMIT: Duration = Duration::from_secs(30);
+
+/// A Python interpreter, as it answered PYTHON_PROBE.
+#[derive(Debug, Clone, PartialEq)]
+struct Python {
+    exe: PathBuf,
+    /// sysconfig.get_platform(): "win-amd64" for the Python of python.org, "mingw_x86_64_ucrt_gnu" for one of MSYS2
+    platform: String,
+    /// sys.platform: "win32" for a MinGW build as well, "cygwin" or "msys" for the Python of those environments
+    sys_platform: String,
+    version: String,
+    /// when it answered, as the log writes a time
+    asked: String,
+    /// ILA_PYTHON names it
+    named: bool,
+}
+
+impl Python {
+    /// The answer of an interpreter, which is one line for each thing it was asked.
+    fn from_answer(answer: &str, named: bool) -> Option<Python> {
+        let mut lines = answer.lines().map(|line| line.trim().to_string());
+        Some(Python {
+            exe: PathBuf::from(lines.next().filter(|exe| !exe.is_empty())?),
+            platform: lines.next()?,
+            sys_platform: lines.next()?,
+            version: lines.next()?,
+            asked: lines.next()?,
+            named,
+        })
+    }
+
+    /// Not the Python of python.org or of the Store, but a MinGW build, as MSYS2 has it, or the Python of Cygwin
+    /// or MSYS. That is another program in details - its path separator is "/" - and the hardware path has never
+    /// been run with it. It is told by what the interpreter says of itself, not by the folder it is in.
+    fn other_build(&self) -> bool {
+        self.platform.to_ascii_lowercase().starts_with("mingw") || matches!(self.sys_platform.as_str(), "cygwin" | "msys")
+    }
+
+    /// What the log says about the interpreter in use.
+    fn note(&self) -> String {
+        let why = if self.named {
+            ", named by ILA_PYTHON"
+        } else if self.other_build() {
+            " - not a standard Python for Windows (a MinGW or Cygwin build); it is used because no other was found"
+        } else {
+            ""
+        };
+        format!("Python {} ({}): {}{}", self.version, self.platform, self.exe.display(), why)
+    }
+}
+
+/// The interpreter to use, of the answers in the order of the search: the first standard one, or the one
+/// ILA_PYTHON names, whatever it is. A MinGW or Cygwin build that comes first on PATH is put behind the others
+/// and not refused: for somebody it is the only Python. The answers are taken only as far as needed - no
+/// candidate behind the chosen one is started.
+fn pick_python(answers: impl Iterator<Item = Python>) -> Option<Python> {
+    let mut spare = None;
+    for python in answers {
+        if python.named || !python.other_build() {
+            return Some(python);
+        }
+        spare.get_or_insert(python);
+    }
+    spare
+}
+
+/// Starts a candidate and takes its answer. There is none from a candidate that cannot be started, is too old
+/// or names a file that is not there; one that does not answer in time is ended and put on the list `silent`.
+fn ask_python(exe: &Path, pre: &[&str], named: bool, silent: &mut Vec<String>) -> Option<Python> {
+    let mut cmd = Command::new(exe);
+    cmd.args(pre).args(["-c", PYTHON_PROBE]).stdin(Stdio::null());
+    match output_within(no_window(&mut cmd), PROBE_LIMIT) {
+        Ok(Some(out)) if out.status.success() => {
+            Python::from_answer(&String::from_utf8_lossy(&out.stdout), named).filter(|python| python.exe.is_file())
+        }
+        Ok(None) => {
+            silent.push(exe.display().to_string());
+            None
+        }
+        _ => None,
+    }
+}
+
+fn find_python() -> Result<Python, String> {
+    // each with the arguments that go in front, and whether ILA_PYTHON names it
+    let mut candidates: Vec<(PathBuf, Vec<&str>, bool)> = Vec::new();
     if let Ok(p) = std::env::var("ILA_PYTHON") {
-        candidates.push((PathBuf::from(p), vec![]));
+        candidates.push((PathBuf::from(p), vec![], true));
     }
     let mut stubs = Vec::new();
     if let Some(paths) = std::env::var_os("PATH") {
@@ -169,9 +283,9 @@ fn find_python() -> Result<PathBuf, String> {
                 let c = dir.join(name);
                 if c.is_file() {
                     if is_stub {
-                        stubs.push((c, vec![]));
+                        stubs.push((c, vec![], false));
                     } else {
-                        candidates.push((c, vec![]));
+                        candidates.push((c, vec![], false));
                     }
                     break;
                 }
@@ -180,24 +294,78 @@ fn find_python() -> Result<PathBuf, String> {
     }
     candidates.extend(stubs);
     // app execution aliases do not always show up as files, so the bare names are tried as well
-    candidates.push((PathBuf::from("python"), vec![]));
-    candidates.push((PathBuf::from("py"), vec!["-3"]));
-    for (exe, pre) in &candidates {
-        let mut cmd = Command::new(exe);
-        // the version check keeps an old interpreter that happens to come first on PATH from being chosen
-        cmd.args(pre)
-            .args(["-c", "import sys; assert sys.version_info >= (3, 8); print(sys.executable)"])
-            .stdin(Stdio::null());
-        if let Ok(out) = no_window(&mut cmd).output() {
-            if out.status.success() {
-                let real = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
-                if real.is_file() {
-                    return Ok(real);
-                }
-            }
+    candidates.push((PathBuf::from("python"), vec![], false));
+    candidates.push((PathBuf::from("py"), vec!["-3"], false));
+    let mut silent: Vec<String> = Vec::new();
+    let found = pick_python(candidates.iter().filter_map(|(exe, pre, named)| ask_python(exe, pre, *named, &mut silent)));
+    found.ok_or_else(|| {
+        let mut message = "Python 3 was not found. Install Python 3.8 or newer, or set the ILA_PYTHON environment variable to the full path of python.exe.".to_string();
+        if !silent.is_empty() {
+            silent.dedup();
+            message += &format!(" (No answer within {}, and ended: {}.)", limit_text(PROBE_LIMIT), silent.join(", "));
         }
+        message
+    })
+}
+
+/// One line at the end of ila_log.txt, in the form the bridge writes its own. A log that cannot be written is
+/// no reason to fail.
+fn append_log(log: &Path, time: &str, text: &str) {
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(log) {
+        let _ = file.write_all(format!("[{time}] {text}\n").as_bytes());
     }
-    Err("Python 3 was not found. Install Python 3.8 or newer, or set the ILA_PYTHON environment variable to the full path of python.exe.".to_string())
+}
+
+/// A time limit as a message names it.
+fn limit_text(limit: Duration) -> String {
+    let secs = limit.as_secs();
+    if secs >= 60 && secs.is_multiple_of(60) { format!("{} min", secs / 60) } else { format!("{secs} s") }
+}
+
+/// Reads a pipe of a child process to its end on a thread of its own, and hands over what came.
+fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<Vec<u8>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut all = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut all);
+        }
+        let _ = tx.send(all);
+    });
+    rx
+}
+
+/// Runs a command to its end and takes what it printed, as `Command::output` does - but for no longer than
+/// `limit`: a child that is still running then is ended, with everything it started, and the answer is `None`.
+/// `output` itself takes no limit. Both pipes are read on threads of their own while the wait goes on: a child
+/// that prints more than a pipe holds would otherwise wait for its reader for good.
+fn output_within(cmd: &mut Command, limit: Duration) -> std::io::Result<Option<std::process::Output>> {
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+    let deadline = Instant::now() + limit;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            kill_tree(child.id());
+            // should the tree not have gone that way: the child itself at least
+            if child.kill().is_ok() {
+                let _ = child.wait();
+            }
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    // The pipes end with the child - unless something it started lives on and holds them. That is given the
+    // rest of the limit (a moment at least: what the child printed last is still on its way), not for ever.
+    let until = deadline.max(Instant::now() + Duration::from_secs(2));
+    let left = || until.saturating_duration_since(Instant::now());
+    match (stdout.recv_timeout(left()), stderr.recv_timeout(left())) {
+        (Ok(stdout), Ok(stderr)) => Ok(Some(std::process::Output { status, stdout, stderr })),
+        _ => Ok(None),
+    }
 }
 
 fn bridge_command() -> Result<Command, String> {
@@ -205,7 +373,7 @@ fn bridge_command() -> Result<Command, String> {
     let bridge = root.join("ila_bridge.py");
     if !bridge.is_file() {
         return Err(format!(
-            "ila_bridge.py was not found in {} - keep the executable in the same folder as the Python scripts.",
+            "ila_bridge.py was not found in {} - keep the executable in the same folder as the Python scripts, or name their folder in the environment variable ILA_HOME.",
             root.display()
         ));
     }
@@ -221,20 +389,53 @@ fn bridge_command() -> Result<Command, String> {
     Ok(cmd)
 }
 
-/// Run an offline bridge command and parse the single JSON document it prints.
-fn bridge_json(args: &[&str]) -> Result<Value, String> {
-    let output = bridge_command()?
-        .args(args)
-        .output()
-        .map_err(|e| format!("Failed to start the Python bridge: {e}"))?;
+// How long the offline commands of the bridge may take. A hardware job has its limit in run_hw_job; these had
+// none, and one that hung - a file on a drive that does not answer, a virus scanner that holds the interpreter -
+// was waited for without end. Each command has its own: what is ample for a probe file would cut the reading of
+// a large capture off.
+/// list-profiles looks whether the probe file of every profile is there, and Windows takes tens of seconds to
+/// give up on each one that is on a server it cannot reach.
+const LIST_PROFILES_LIMIT: Duration = Duration::from_secs(5 * 60);
+/// A probe file is small: what takes long is the drive it is on.
+const PARSE_LTX_LIMIT: Duration = Duration::from_secs(2 * 60);
+/// The demo data, which is a million rows at most: seconds.
+const DEMO_CAPTURE_LIMIT: Duration = Duration::from_secs(5 * 60);
+
+/// How long the reading of a capture file of this size may take. The bridge reads the file whole. A million
+/// samples of the demo data - 40 MB as CSV, and far more samples than an ILA holds - take one or two seconds on
+/// a desktop PC: the five minutes are for a slow PC and a slow drive. A file can be larger than that all the
+/// same, and a compressed one holds many times its size - so every 10 MB add a minute: a large capture that is
+/// slow to read is not what the limit is there to end.
+fn capture_read_limit(bytes: u64) -> Duration {
+    Duration::from_secs(5 * 60 + bytes / (10 * 1024 * 1024) * 60)
+}
+
+/// Run an offline bridge command and parse the single JSON document it prints. One that has not ended within
+/// `limit` is ended, and the answer says so.
+fn bridge_json(args: &[&str], limit: Duration) -> Result<Value, String> {
+    let command = args.first().copied().unwrap_or("");
+    let output = output_within(bridge_command()?.args(args), limit)
+        .map_err(|e| format!("Failed to start the Python bridge: {e}"))?
+        .ok_or_else(|| {
+            format!(
+                "ila_bridge.py {command} did not finish within {} and was ended: Python hangs, or a file it reads is very large or on a drive that does not answer.",
+                limit_text(limit)
+            )
+        })?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() };
-        return Err(format!("ila_bridge.py {} failed: {}", args.first().unwrap_or(&""), detail));
+        return Err(format!("ila_bridge.py {command} failed: {detail}"));
     }
     serde_json::from_str(stdout.trim().trim_start_matches('\u{feff}'))
-        .map_err(|e| format!("Unreadable answer from ila_bridge.py {}: {e}", args.first().unwrap_or(&"")))
+        .map_err(|e| format!("Unreadable answer from ila_bridge.py {command}: {e}"))
+}
+
+/// A capture file as the page shows it ("parse-csv" of the bridge).
+fn read_capture(path: &str, max_samples: &str) -> Result<Value, String> {
+    let bytes = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    reject_error(bridge_json(&["parse-csv", "--file", path, "--max-samples", max_samples], capture_read_limit(bytes))?)
 }
 
 /// A bridge answer of the form {"error": "..."} is a failure, not data.
@@ -642,7 +843,7 @@ fn profile_file_name(name: &str) -> String {
 
 #[tauri::command]
 async fn list_profiles() -> Result<Value, String> {
-    blocking(|| bridge_json(&["list-profiles"])).await
+    blocking(|| bridge_json(&["list-profiles"], LIST_PROFILES_LIMIT)).await
 }
 
 /// The profile file of the folder that is called `name`, as the folder writes it: a profile of the list is named
@@ -811,16 +1012,12 @@ async fn save_profile(
 
 #[tauri::command]
 async fn parse_ltx(path: String) -> Result<Value, String> {
-    blocking(move || bridge_json(&["parse-ltx", "--ltx", &path])).await
+    blocking(move || bridge_json(&["parse-ltx", "--ltx", &path], PARSE_LTX_LIMIT)).await
 }
 
 #[tauri::command]
 async fn load_csv_data(file_path: String, max_samples: Option<usize>) -> Result<Value, String> {
-    blocking(move || {
-        let max = max_samples.unwrap_or(4096).to_string();
-        reject_error(bridge_json(&["parse-csv", "--file", &file_path, "--max-samples", &max])?)
-    })
-    .await
+    blocking(move || read_capture(&file_path, &max_samples.unwrap_or(4096).to_string())).await
 }
 
 /// The most captures one import brings into the list (the list itself holds no more).
@@ -981,9 +1178,9 @@ async fn create_demo_capture(samples: Option<u32>) -> Result<Value, String> {
     blocking(move || {
         // bounded: the bridge writes one row per sample, and nothing else limits what the page may ask for
         let count = samples.unwrap_or(2048).clamp(1, 1_000_000).to_string();
-        let made = bridge_json(&["demo-capture", "--samples", &count])?;
+        let made = bridge_json(&["demo-capture", "--samples", &count], DEMO_CAPTURE_LIMIT)?;
         let path = made["filePath"].as_str().ok_or("The demo capture was not written.")?.to_string();
-        reject_error(bridge_json(&["parse-csv", "--file", &path, "--max-samples", "4096"])?)
+        read_capture(&path, "4096")
     })
     .await
 }
@@ -1632,5 +1829,263 @@ mod tests {
             let args = pushed(HwArgs { engines: Some(asked), ..no_hw_args() });
             assert_eq!(args.last().map(String::as_str), Some(sent), "{asked} engines");
         }
+    }
+
+    /// Full paths of folders that need not be there: an executable five folders deep, and a working directory.
+    fn exe_and_cwd() -> (PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join("ila_studio_roots");
+        (base.join("a").join("b").join("c").join("d").join("bin"), base.join("work").join("here"))
+    }
+
+    #[test]
+    fn root_candidates_of_a_release_build_are_its_own_folder_and_nothing_else() {
+        let (exe, cwd) = exe_and_cwd();
+        // not the folders above it, and not the folder it was started from
+        assert_eq!(root_candidates(Some(&exe), None, &cwd, false), [exe.as_path()]);
+        // without a folder of its own there is nowhere to look
+        assert!(root_candidates(None, None, &cwd, false).is_empty());
+    }
+
+    #[test]
+    fn root_candidates_take_the_folder_ila_home_names_after_the_own_one() {
+        let (exe, cwd) = exe_and_cwd();
+        let scripts = std::env::temp_dir().join("ila_studio_roots").join("scripts");
+        assert_eq!(root_candidates(Some(&exe), Some(&scripts), &cwd, false), [exe.as_path(), scripts.as_path()]);
+        assert_eq!(root_candidates(None, Some(&scripts), &cwd, false), [scripts.as_path()]);
+        // only a full path: anything else would be read from the working directory
+        for relative in ["scripts", ".", "..", ""] {
+            assert_eq!(root_candidates(Some(&exe), Some(Path::new(relative)), &cwd, false), [exe.as_path()], "{relative:?}");
+        }
+        // a development build takes it at the same place, before it walks
+        let development = root_candidates(Some(&exe), Some(&scripts), &cwd, true);
+        assert_eq!(development[..3], [exe.clone(), scripts, exe.parent().expect("five deep").to_path_buf()]);
+    }
+
+    #[test]
+    fn root_candidates_of_a_development_build_walk_up_as_before() {
+        let (exe, cwd) = exe_and_cwd();
+        // target\debug is two folders below src-tauri and three below the repository
+        let mut walk: Vec<PathBuf> = exe.ancestors().take(5).map(Path::to_path_buf).collect();
+        walk.extend(cwd.ancestors().take(2).map(Path::to_path_buf));
+        assert_eq!(walk.len(), 7);
+        assert_eq!(root_candidates(Some(&exe), None, &cwd, true), walk);
+        assert_eq!(root_candidates(None, None, &cwd, true), walk[5..]);
+    }
+
+    /// An answer as PYTHON_PROBE prints it.
+    fn answer(exe: &str, platform: &str, sys_platform: &str) -> String {
+        format!("{exe}\r\n{platform}\r\n{sys_platform}\r\n3.12.4\r\n2025-06-30 12:00:00.123\r\n")
+    }
+
+    fn python(exe: &str, platform: &str, sys_platform: &str, named: bool) -> Python {
+        Python::from_answer(&answer(exe, platform, sys_platform), named).expect("a whole answer")
+    }
+
+    #[test]
+    fn python_from_answer_takes_one_line_for_each_thing_asked() {
+        let found = python("C:\\Python312\\python.exe", "win-amd64", "win32", false);
+        assert_eq!(
+            found,
+            Python {
+                exe: PathBuf::from("C:\\Python312\\python.exe"),
+                platform: "win-amd64".to_string(),
+                sys_platform: "win32".to_string(),
+                version: "3.12.4".to_string(),
+                asked: "2025-06-30 12:00:00.123".to_string(),
+                named: false,
+            }
+        );
+        assert!(python("python.exe", "win-amd64", "win32", true).named);
+        // what a launcher stub without a Python behind it prints, or an answer that was cut off, is none
+        assert_eq!(Python::from_answer("", false), None);
+        assert_eq!(Python::from_answer("\r\nwin-amd64\r\nwin32\r\n3.12.4\r\n2025-06-30 12:00:00.123\r\n", false), None);
+        assert_eq!(Python::from_answer("C:\\Python312\\python.exe\nwin-amd64\nwin32\n3.12.4\n", false), None);
+    }
+
+    #[test]
+    fn python_other_build_goes_by_what_the_interpreter_says_of_itself() {
+        assert!(!python("C:\\Python312\\python.exe", "win-amd64", "win32", false).other_build());
+        assert!(!python("C:\\Python312-arm\\python.exe", "win-arm64", "win32", false).other_build());
+        assert!(!python("/usr/bin/python3", "linux-x86_64", "linux", false).other_build());
+        assert!(python("C:\\msys64\\ucrt64\\bin\\python.exe", "mingw_x86_64_ucrt_gnu", "win32", false).other_build());
+        assert!(python("C:\\msys64\\mingw64\\bin\\python.exe", "mingw_x86_64", "win32", false).other_build());
+        assert!(python("C:\\msys64\\usr\\bin\\python.exe", "cygwin-3.5.4-x86_64", "cygwin", false).other_build());
+        assert!(python("C:\\msys64\\usr\\bin\\python.exe", "msys-3.5.4-x86_64", "msys", false).other_build());
+        // not by the folder: a standard Python may be installed anywhere, and a MinGW one copied anywhere
+        assert!(!python("C:\\msys64\\ucrt64\\bin\\python.exe", "win-amd64", "win32", false).other_build());
+        assert!(python("C:\\Python312\\python.exe", "mingw_x86_64_ucrt_gnu", "win32", false).other_build());
+    }
+
+    #[test]
+    fn pick_python_puts_a_mingw_build_behind_a_standard_one() {
+        let mingw = python("C:\\msys64\\ucrt64\\bin\\python.exe", "mingw_x86_64_ucrt_gnu", "win32", false);
+        let cygwin = python("C:\\cygwin64\\bin\\python3.exe", "cygwin-3.5.4-x86_64", "cygwin", false);
+        let standard = python("C:\\Python312\\python.exe", "win-amd64", "win32", false);
+        let store = python("C:\\Store\\python3.12.exe", "win-amd64", "win32", false);
+
+        // PATH has the MinGW one first: the standard one behind it is taken, and nothing behind that is asked
+        let mut answers = vec![mingw.clone(), cygwin.clone(), standard.clone(), store.clone()].into_iter();
+        assert_eq!(pick_python(answers.by_ref()), Some(standard.clone()));
+        assert_eq!(answers.next(), Some(store.clone()));
+
+        // a standard one that comes first is taken at once, as it always was
+        let mut answers = vec![standard.clone(), mingw.clone()].into_iter();
+        assert_eq!(pick_python(answers.by_ref()), Some(standard.clone()));
+        assert_eq!(answers.next(), Some(mingw.clone()));
+
+        // not refused: where there is no other, the first of them is the Python
+        assert_eq!(pick_python(vec![mingw.clone(), cygwin.clone()].into_iter()), Some(mingw.clone()));
+        assert_eq!(pick_python(std::iter::empty()), None);
+    }
+
+    #[test]
+    fn pick_python_takes_what_ila_python_names_whatever_it_is() {
+        let named = python("D:\\tools\\ucrt64\\bin\\python.exe", "mingw_x86_64_ucrt_gnu", "win32", true);
+        let standard = python("C:\\Python312\\python.exe", "win-amd64", "win32", false);
+        let mut answers = vec![named.clone(), standard.clone()].into_iter();
+        assert_eq!(pick_python(answers.by_ref()), Some(named));
+        assert_eq!(answers.next(), Some(standard));
+    }
+
+    #[test]
+    fn python_note_names_the_interpreter_and_why_an_unusual_one_is_used() {
+        let exe = "C:\\Python312\\python.exe";
+        assert_eq!(python(exe, "win-amd64", "win32", false).note(), format!("Python 3.12.4 (win-amd64): {exe}"));
+        assert_eq!(
+            python(exe, "win-amd64", "win32", true).note(),
+            format!("Python 3.12.4 (win-amd64): {exe}, named by ILA_PYTHON")
+        );
+        let mingw = "C:\\msys64\\ucrt64\\bin\\python.exe";
+        assert_eq!(
+            python(mingw, "mingw_x86_64_ucrt_gnu", "win32", false).note(),
+            format!(
+                "Python 3.12.4 (mingw_x86_64_ucrt_gnu): {mingw} - not a standard Python for Windows (a MinGW or \
+                 Cygwin build); it is used because no other was found"
+            )
+        );
+        assert_eq!(
+            python(mingw, "mingw_x86_64_ucrt_gnu", "win32", true).note(),
+            format!("Python 3.12.4 (mingw_x86_64_ucrt_gnu): {mingw}, named by ILA_PYTHON")
+        );
+    }
+
+    #[test]
+    fn append_log_adds_a_line_in_the_form_of_the_bridge() {
+        let dir = Scratch::new("append_log");
+        let log = dir.file("ila_log.txt", "[2025-06-30 11:59:00.000] ---- serve: ended\n");
+        append_log(&log, "2025-06-30 12:00:00.123", "Python 3.12.4 (win-amd64): C:\\Python312\\python.exe");
+        assert_eq!(
+            fs::read_to_string(&log).expect("the log"),
+            "[2025-06-30 11:59:00.000] ---- serve: ended\n\
+             [2025-06-30 12:00:00.123] Python 3.12.4 (win-amd64): C:\\Python312\\python.exe\n"
+        );
+        // a log that is not there yet is begun; one that cannot be written is no failure
+        let fresh = dir.0.join("fresh.txt");
+        append_log(&fresh, "2025-06-30 12:00:01.000", "one line");
+        assert_eq!(fs::read_to_string(&fresh).expect("the log"), "[2025-06-30 12:00:01.000] one line\n");
+        append_log(&dir.0.join("missing").join("ila_log.txt"), "2025-06-30 12:00:02.000", "nowhere");
+        assert!(!dir.0.join("missing").exists());
+    }
+
+    #[test]
+    fn limit_text_is_in_minutes_where_they_are_whole() {
+        assert_eq!(limit_text(Duration::from_secs(30)), "30 s");
+        assert_eq!(limit_text(Duration::from_secs(90)), "90 s");
+        assert_eq!(limit_text(Duration::from_secs(120)), "2 min");
+        assert_eq!(limit_text(LIST_PROFILES_LIMIT), "5 min");
+    }
+
+    #[test]
+    fn capture_read_limit_grows_with_the_file() {
+        const MB: u64 = 1024 * 1024;
+        // a file that is not there has no size: what then takes long is not the reading
+        assert_eq!(capture_read_limit(0), Duration::from_secs(5 * 60));
+        assert_eq!(capture_read_limit(9 * MB), Duration::from_secs(5 * 60));
+        assert_eq!(capture_read_limit(10 * MB), Duration::from_secs(6 * 60));
+        assert_eq!(capture_read_limit(40 * MB), Duration::from_secs(9 * 60));
+        assert_eq!(capture_read_limit(1024 * MB), Duration::from_secs(107 * 60));
+        // always whole minutes, as the message names them
+        assert_eq!(limit_text(capture_read_limit(25 * MB + 7)), "7 min");
+        // no size overflows it
+        assert!(capture_read_limit(u64::MAX) > capture_read_limit(1024 * MB));
+    }
+
+    /// A command of the system: `line` as cmd.exe runs it on Windows, `script` as sh does elsewhere.
+    fn shell(line: &str, script: &str) -> Command {
+        let mut cmd = if cfg!(windows) { Command::new("cmd") } else { Command::new("sh") };
+        if cfg!(windows) {
+            cmd.args(["/d", "/c", line]);
+        } else {
+            cmd.args(["-c", script]);
+        }
+        cmd.stdin(Stdio::null());
+        cmd
+    }
+
+    #[test]
+    fn output_within_takes_what_a_command_printed_and_how_it_ended() {
+        let out = output_within(&mut shell("echo one& echo two 1>&2& exit 3", "echo one; echo two 1>&2; exit 3"), Duration::from_secs(60))
+            .expect("started")
+            .expect("ended in time");
+        assert_eq!(out.status.code(), Some(3));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "one");
+        assert_eq!(String::from_utf8_lossy(&out.stderr).trim(), "two");
+    }
+
+    #[test]
+    fn output_within_reads_more_than_a_pipe_holds_from_both_pipes() {
+        let dir = Scratch::new("output_within_large");
+        // far beyond the buffer of a pipe: a child whose pipes nobody reads would stop here and never end
+        let row = "0123456789abcdef".repeat(4) + "\n";
+        let big = dir.file("big.txt", &row.repeat(8192));
+        let size = fs::metadata(&big).expect("written").len() as usize;
+        assert!(size > 500_000);
+        // The error pipe first: a reader that took one pipe after the other would wait at the wrong one. The file
+        // is named from its folder: a path would have to be quoted, and cmd.exe has its own idea of quotes.
+        let mut cmd = shell("type big.txt 1>&2& type big.txt", "cat big.txt 1>&2; cat big.txt");
+        cmd.current_dir(&dir.0);
+        let out = output_within(&mut cmd, Duration::from_secs(60)).expect("started").expect("ended in time");
+        assert!(out.status.success());
+        assert_eq!(out.stdout.len(), size);
+        assert_eq!(out.stderr.len(), size);
+    }
+
+    #[test]
+    fn output_within_ends_a_command_that_takes_longer_than_its_limit() {
+        let dir = Scratch::new("output_within_limit");
+        // Three seconds of doing nothing, then a file - written by a shell that the command started, on Windows,
+        // where ending the command alone would leave that one running.
+        let mut slow = shell(
+            "cmd /d /c ping -n 4 127.0.0.1 ^>nul ^& echo late^>late.txt",
+            "sleep 3; echo late > late.txt",
+        );
+        slow.current_dir(&dir.0);
+        let started = Instant::now();
+        let out = output_within(&mut slow, Duration::from_millis(300)).expect("started");
+        assert!(out.is_none(), "it was not waited for");
+        assert!(started.elapsed() >= Duration::from_millis(300));
+        // it was ended, not just left alone: the file never comes
+        std::thread::sleep(Duration::from_millis(3500));
+        assert!(!dir.0.join("late.txt").exists());
+    }
+
+    #[test]
+    fn output_within_lets_a_command_that_is_in_time_finish() {
+        let dir = Scratch::new("output_within_in_time");
+        // the same command with a limit it keeps: the file is there, so the test above ends what would write it
+        let mut slow = shell(
+            "cmd /d /c ping -n 2 127.0.0.1 ^>nul ^& echo late^>late.txt",
+            "sleep 1; echo late > late.txt",
+        );
+        slow.current_dir(&dir.0);
+        let out = output_within(&mut slow, Duration::from_secs(60)).expect("started").expect("ended in time");
+        assert!(out.status.success());
+        assert!(dir.0.join("late.txt").exists());
+    }
+
+    #[test]
+    fn output_within_says_when_a_command_cannot_be_started() {
+        let mut missing = Command::new("ila_studio_no_such_program");
+        assert!(output_within(&mut missing, Duration::from_secs(5)).is_err());
     }
 }

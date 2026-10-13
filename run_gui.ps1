@@ -11,7 +11,14 @@ $candidates = @(
 )
 $builtExe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($builtExe) {
-    Start-Process -FilePath $builtExe -WorkingDirectory (Split-Path $builtExe)
+    # A release build runs the scripts of its own folder and looks nowhere else by itself. The local release build
+    # has none beside it, so it is told where they are: here (ILA_HOME). The distributed build takes its own
+    # first. The variable is put back afterwards: it is that of the whole PowerShell session.
+    $homeBefore = $env:ILA_HOME
+    $env:ILA_HOME = $PSScriptRoot
+    try {
+        Start-Process -FilePath $builtExe -WorkingDirectory (Split-Path $builtExe)
+    } finally { $env:ILA_HOME = $homeBefore }
 } else {
     Push-Location $PSScriptRoot
     try {

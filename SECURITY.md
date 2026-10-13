@@ -110,8 +110,12 @@ or a `.ila`: the text it unpacks to). A probe file is read whole, and only up to
   without its key) in the WebView storage of the application under `%LOCALAPPDATA%`.
 - Short-lived helper files are written to `%TEMP%`: a stop flag for a running job, and a small script for the
   cable repair.
-- The executable runs the `ila_bridge.py` it finds in its own folder. If there is none, it looks in the four
-  folders above it, then in the working directory and the folder above that. Keep the program in a folder that only you can write to.
+- The executable runs the `ila_bridge.py` of its own folder. If there is none, a release build takes the
+  folder that the environment variable `ILA_HOME` names with a full path, and looks nowhere else: not in the
+  folders above it and not in the working directory. Only a development build (`npm run tauri dev`) goes on to
+  the four folders above it, then to the working directory and the folder above that. Keep the program in a
+  folder that only you can write to. Whoever can set `ILA_HOME` or `ILA_PYTHON` in the environment the program
+  is started from decides which scripts and which Python it runs.
 
 ### Releases
 

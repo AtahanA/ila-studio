@@ -463,9 +463,12 @@ GUI (React)  --invoke-->  Rust (async commands, never on the UI thread)
                                                vivado -mode tcl  scripts/vivado_ila_repl.tcl
 ```
 
-- The executable finds `ila_bridge.py` next to itself (a portable folder) or a few folders above (a development
-  build) and starts it with the Python it found. Reading a probe file, listing the profiles, reading a capture
-  file and the demo data are each one short Python process.
+- The executable finds `ila_bridge.py` next to itself (a portable folder), in the folder that the environment
+  variable `ILA_HOME` names (how `run_gui.ps1` starts a local release build) or, a development build only, a
+  few folders above, and starts it with the Python it found; `ila_log.txt` names that Python. Reading a probe
+  file, listing the profiles, reading a capture file and the demo data are each one short Python process with
+  a time limit: one that hangs is ended with a message (after 2 to 5 minutes; a capture file gets a minute
+  more for every 10 MB).
 - Progress lines reach the status line live (`ila-log` events); each finished capture joins the list the
   moment its file is on disk (`ila-capture` event) and is shown while the newest capture is followed.
   Everything is also appended to `ila_log.txt`.

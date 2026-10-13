@@ -53,7 +53,8 @@ To run:
   a Windows 10 PC that lacks it).
 - **Python 3.8 or newer.** Only the standard library is used; there is nothing to `pip install`. The
   application looks for it in this order: the path in the environment variable `ILA_PYTHON`, then `PATH`, then
-  `py -3`.
+  `py -3`. A Python of MSYS2 (a MinGW build) or of Cygwin is passed over on the way and only taken when there
+  is no other, unless `ILA_PYTHON` names it. Each start writes the interpreter in use into `ila_log.txt`.
 - For hardware work: **Vivado or Vivado Lab Edition**, and a running hw_server that the JTAG cable is attached
   to. Vivado is looked for in this order: `tools.vivado` of the selected profile (without one:
   `C:\Xilinx\Vivado\2017.4\bin\vivado.bat`); `vivado` / `vivado_lab` on `PATH`; the folder in `XILINX_VIVADO`,
@@ -123,7 +124,10 @@ beside them, which an installer does not provide for.
 
 `.\run_gui.ps1` starts `distribute\ila-studio.exe` if it exists, else a local release build, else
 `npm run tauri dev`. If PowerShell refuses to run scripts:
-`powershell -ExecutionPolicy Bypass -File .\run_gui.ps1`.
+`powershell -ExecutionPolicy Bypass -File .\run_gui.ps1`. A release build runs only the scripts of its own
+folder. The local one in `src-tauri\target\release` has none beside it: the script names their folder in the
+environment variable `ILA_HOME`, and so must you (the full path of the folder with `ila_bridge.py`) to start
+that executable yourself.
 
 ## Where data is written
 
@@ -270,7 +274,7 @@ GUI (React)  --invoke-->  Rust (async commands, never on the UI thread)
 | `Vivado not found (tools.vivado is ...)` | Vivado is in none of the places that are searched. | Any one of these: put Vivado's `bin` folder on `PATH`; set `XILINX_VIVADO` to the installation folder; install under `Xilinx\Vivado` on `C:`, `D:` or `E:`; write the full path of `vivado.bat` as `tools.vivado` into a profile. |
 | `Failed to parse LTX: ...` | The file is not a probe file as Vivado writes one: neither the XML form nor the JSON form (which begins with `{ "ltx_root"`). What follows the colon says where reading it ended - or that the file is larger than 64 MB, the most a probe file is read up to. | Pick the `.ltx` that the implementation run wrote for the bitstream on the board. |
 | `the probe file does not name the debug hub clock, so TCK (...) was not limited to hub clock / 2.5`, in the message of a connect or a capture | With the JTAG clock on `Auto`: the probe file has no entry for the clock of the debug hub, so there was nothing to hold the cable's own frequency against. | Nothing, while the captures work. If the core stays IDLE, choose a JTAG clock at or below hub clock / 2.5 yourself. |
-| `ila_bridge.py was not found in ...` | The executable was copied without the scripts. | Keep `ila-studio.exe` in the folder that `make_distribute.ps1` made. |
+| `ila_bridge.py was not found in ...` | The executable is not in the folder of the scripts: it was copied without them, or it is a local release build that was started directly. A release build does not look in other folders. | Keep `ila-studio.exe` in the folder that `make_distribute.ps1` made. Start a local release build with `run_gui.ps1`, or set `ILA_HOME` to the full path of the folder with the scripts. |
 | `hw_server at ... is not reachable` | Wrong address, network, cable off. | Checked in 3 s before Vivado is started. Check the address and the cable. |
 | `[Common 17-70] Application Exception: bad enum default`, then no hardware targets | The cable runs at a TCK frequency Vivado cannot represent (a SmartLynq asked for 6 MHz reports 6034482 Hz), left behind by an earlier session while another client (e.g. an SDK debug session) kept the cable open. | Detected and repaired automatically (xsdb puts the cable back to 10 MHz, then the connect is retried). On a hw_server with several cables, every cable that runs at such a frequency is put back; where the selected profile names a cable with `hardware.target_filter`, only that one is. A cable that was left alone is named in the log (`TCK_LEFT`), and in the message when the connect still fails: it may then be the one in the way. Every session also restores the cable's frequency when it ends. Seen in ANOTHER Vivado while ILA Studio is connected: click Disconnect here first. |
 | `the ILA core does not run: it is still IDLE after being armed` | TCK too fast for the debug hub clock, or the ILA clock is stopped. In a session that has been open for a while: another program has changed the cable's JTAG clock. | Use `Auto` (or a frequency at or below hub clock / 2.5). Where the message says that the probe file does not name the hub clock, `Auto` has nothing to go by: choose the frequency yourself. A kept session reconnects by itself and tries the capture once more; otherwise Disconnect and Connect. |
