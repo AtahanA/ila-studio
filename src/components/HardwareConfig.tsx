@@ -30,6 +30,8 @@ interface HardwareConfigProps {
   coresLocked?: boolean;
   onParseLtx: (path?: string) => void;
   isParsing: boolean;
+  /** a file dialog could not be opened: the sentence for the status line (a release build has no console) */
+  onError: (text: string) => void;
 }
 
 export const HardwareConfig: React.FC<HardwareConfigProps> = ({
@@ -53,7 +55,11 @@ export const HardwareConfig: React.FC<HardwareConfigProps> = ({
   coresLocked,
   onParseLtx,
   isParsing,
+  onError,
 }) => {
+  // "Browse" must not be a button that does nothing: why no dialog opened is said where the user looks
+  const dialogFailed = (e: unknown) => onError(`Could not open the file dialog: ${e}`);
+
   const handleBrowseLtx = async () => {
     try {
       const selected = await open({
@@ -65,7 +71,7 @@ export const HardwareConfig: React.FC<HardwareConfigProps> = ({
         onParseLtx(selected);
       }
     } catch (e) {
-      console.error("File dialog error:", e);
+      dialogFailed(e);
     }
   };
 
@@ -79,7 +85,7 @@ export const HardwareConfig: React.FC<HardwareConfigProps> = ({
         setTclPath(selected);
       }
     } catch (e) {
-      console.error("File dialog error:", e);
+      dialogFailed(e);
     }
   };
 

@@ -34,6 +34,7 @@ import {
   trimNumber,
 } from "../analysis";
 import { HoverStore } from "../hoverStore";
+import { captureLabel } from "../names";
 import { CURVE_SLOTS, curveColor, plotPalette, useTheme } from "../theme";
 import { CursorName, PlotCurve, PlotPane, clampRange } from "./PlotPane";
 import {
@@ -194,14 +195,6 @@ const OTHER_STEP = "This capture was thinned differently from the one on screen:
 const NO_COMPARE: ComparedCapture[] = [];
 /** characters of a capture's name that a group of the signal list always shows of its end ("_001_0003") */
 const NAME_TAIL = 9;
-
-/** "20250101_120000_unit/cap_run_001_0003": the folder tells apart captures that all have the same file name */
-const captureName = (path: string) => {
-  const parts = path.split(/[\\/]/);
-  const file = (parts.pop() || path).replace(/\.(csv|ila)$/i, "");
-  const folder = parts.pop();
-  return folder ? `${folder}/${file}` : file;
-};
 
 interface Axis {
   xOrigin: number;
@@ -1575,7 +1568,7 @@ const SignalList = React.memo<SignalListProps>(function SignalList({ waveform, c
       ) : (
         <div className="analysis-signal-list grouped">
           <div className={`analysis-signal-group ${folded.has("") ? "collapsed" : ""}`} data-kind="screen">
-            {header("", folded.has(""), "On screen", captureName(waveform.filePath), waveform.filePath, counted(screenRows), false)}
+            {header("", folded.has(""), "On screen", captureLabel(waveform.filePath), waveform.filePath, counted(screenRows), false)}
             {screenRows.rows}
           </div>
           {groups.map(({ capture: c, usable, isFolded, list }) => (
@@ -1731,7 +1724,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       const c = compare.find((x) => x.path === path);
       if (!c) {
         const was = captureOf?.(path) ?? comparedBefore.current.get(path);
-        return { id: was?.id ?? 0, name: was?.name ?? captureName(path), state: "gone" };
+        return { id: was?.id ?? 0, name: was?.name ?? captureLabel(path), state: "gone" };
       }
       const state = c.error ? "failed" : !c.waveform ? "loading" : (c.waveform.step || 1) !== stride ? "step" : "ok";
       return { id: c.id, name: c.name, state };

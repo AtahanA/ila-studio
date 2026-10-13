@@ -189,6 +189,148 @@ export function guiOf(data: unknown): ProfileGui | null {
 }
 
 /**
+ * A number from a file anyone can edit: the number itself, or text that spells one in decimal ("6000000" - the
+ * capture script reads such keys with int(), so a profile with this text works on the command line). undefined
+ * for anything else, also for what Number() would take for 0 or 1: "", null, [], true.
+ */
+export function numberOf(v: unknown): number | undefined {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\s*[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?\s*$/i.test(v) ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** the largest position and core number a request to the backend carries (it reads them as u32) */
+const MAX_U32 = 0xffffffff;
+
+/** What the page takes from the sections "hardware", "capture" and "tools" of a profile. */
+export interface ProfileValues {
+  /** null: the profile names no hw_server (an empty text is one: a profile saved with an empty field) */
+  url: string | null;
+  /** "" where the profile names none: the probe file, the device filter, the Tcl script, the trigger */
+  ltx: string;
+  deviceFilter: string;
+  tclScript: string;
+  trigger: string;
+  /** TCK in Hz; 0 = automatic, also where the profile names none */
+  jtagHz: number;
+  ilaIndex: number;
+  /** null: not named, the page keeps its own */
+  position: number | null;
+  timeoutMin: number | null;
+  samplePeriodNs: number | null;
+  /**
+   * What the profile holds that its key cannot take, each as "hardware.ila_index is not a number". These values
+   * are left out - the page goes on as if the profile did not name them - and are said when it is selected.
+   */
+  ignored: string[];
+}
+
+/**
+ * The values of a profile the page works with, read with care (a profile is a file anyone can edit). Each is
+ * taken only as the kind of value its key holds: a number may be written as text, is never negative, and is
+ * rounded where the key counts something; text is text. Anything else would travel on into the request of a
+ * capture, which the backend then refuses without naming the profile or the key - or it would end the page,
+ * where a number arrives at a place that works on text.
+ */
+export function profileValues(data: unknown): ProfileValues {
+  const ignored: string[] = [];
+  const part = (name: string): Json => {
+    const s = isObject(data) ? data[name] : undefined;
+    if (s !== undefined && s !== null && !isObject(s)) ignored.push(`${name} is not a section`);
+    return isObject(s) ? s : {};
+  };
+  const text = (s: Json, at: string): string | null => {
+    const v = s[at.split(".")[1]];
+    if (typeof v === "string") return v;
+    if (v !== undefined && v !== null) ignored.push(`${at} is not a text`);
+    return null;
+  };
+  // `max`: the key counts something - the value is rounded, and may not be larger than a request can carry
+  const number = (s: Json, at: string, max?: number): number | null => {
+    const v = s[at.split(".")[1]];
+    if (v === undefined || v === null) return null;
+    const n = numberOf(v);
+    const why = n === undefined ? "is not a number" : n < 0 ? "is negative" : max !== undefined && Math.round(n) > max ? "is too large" : "";
+    if (n === undefined || why !== "") {
+      ignored.push(`${at} ${why}`);
+      return null;
+    }
+    return max !== undefined ? Math.round(n) : n;
+  };
+  const hardware = part("hardware");
+  const capture = part("capture");
+  const tools = part("tools");
+  // (read section by section: that is the order `ignored` names them in)
+  return {
+    url: text(hardware, "hardware.url"),
+    ltx: text(hardware, "hardware.ltx") ?? "",
+    deviceFilter: text(hardware, "hardware.device_filter") ?? "",
+    ilaIndex: number(hardware, "hardware.ila_index", MAX_U32) ?? 0,
+    jtagHz: number(hardware, "hardware.jtag_frequency_hz", Number.MAX_SAFE_INTEGER) ?? 0,
+    trigger: text(capture, "capture.trigger") ?? "",
+    position: number(capture, "capture.position", MAX_U32),
+    timeoutMin: number(capture, "capture.timeout_min"),
+    samplePeriodNs: number(capture, "capture.sample_period_ns"),
+    tclScript: text(tools, "tools.tcl_script") ?? "",
+    ignored,
+  };
+}
+
+/**
+ * What the status line says of a profile that was selected and could not be taken as it is: its file could not
+ * be read, or values of it were left out (see ProfileValues.ignored). "" when there is nothing to say. The keys
+ * come first: the status line shows the beginning of a long sentence, and the rest as its tooltip.
+ */
+export function profileNote(profile: { name?: unknown; filename?: unknown; error?: unknown }, ignored: string[]): string {
+  const file = typeof profile.filename === "string" ? profile.filename : "";
+  const name = typeof profile.name === "string" && profile.name.trim() !== "" ? profile.name.trim() : file.replace(/\.json$/i, "");
+  if (typeof profile.error === "string" && profile.error !== "") return `Could not read the profile "${name}" (profiles\\${file}): ${profile.error}`;
+  if (ignored.length === 0) return "";
+  return `Profile "${name}": ${ignored.join(", ")} - left out (profiles\\${file}).`;
+}
+
+/** The hardware settings of the last session, as the page stores them to come back the way it was left. */
+export interface SavedSettings {
+  selectedProfilePath: string;
+  serverUrl: string;
+  ltxPath: string;
+  tclPath: string;
+  deviceFilter: string;
+  omitJtagFreq: boolean;
+  jtagFreqHz: number;
+  selectedCoreIndex: number;
+  /** the cell name of that core: a list of cores read later has it at whatever position */
+  selectedCoreName?: string;
+  twinTurbo: boolean;
+}
+
+/**
+ * The stored settings as far as they can be used: each entry only as the kind of value it is, as with a profile
+ * (the storage was written by another run of the program, perhaps by another version of it, and can be edited
+ * like any file). What is not is left out; null for what is no set of settings at all.
+ */
+export function settingsOf(stored: unknown): Partial<SavedSettings> | null {
+  if (!isObject(stored)) return null;
+  const text = (v: unknown) => (typeof v === "string" ? v : undefined);
+  const flag = (v: unknown) => (typeof v === "boolean" ? v : undefined);
+  const count = (v: unknown, max: number) => {
+    const n = numberOf(v);
+    return n !== undefined && n >= 0 && Math.round(n) <= max ? Math.round(n) : undefined;
+  };
+  return {
+    selectedProfilePath: text(stored.selectedProfilePath),
+    serverUrl: text(stored.serverUrl),
+    ltxPath: text(stored.ltxPath),
+    tclPath: text(stored.tclPath),
+    deviceFilter: text(stored.deviceFilter),
+    omitJtagFreq: flag(stored.omitJtagFreq),
+    jtagFreqHz: count(stored.jtagFreqHz, Number.MAX_SAFE_INTEGER),
+    selectedCoreIndex: count(stored.selectedCoreIndex, MAX_U32),
+    selectedCoreName: text(stored.selectedCoreName),
+    twinTurbo: flag(stored.twinTurbo),
+  };
+}
+
+/**
  * The name the Save dialog starts with: that of the selected profile if it was saved from the page (it is saved
  * again), else that of the probe file, else a plain one. Never the name of a listed profile that was written by
  * hand - also not where the probe file happens to be called like one: to replace such a profile, its name has

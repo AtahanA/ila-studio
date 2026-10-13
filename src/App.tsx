@@ -15,9 +15,22 @@ import {
   HwSession,
   PROBE_FORMATS,
   ProbeFormat,
+  StopAnswer,
 } from "./types";
-import { probeKey, ruleTrigger } from "./trigger";
-import { beyondThePage, formatOf, guiOf, nameToOffer, profileOf, sameFileName } from "./profile";
+import { probeKey, ruleTarget, ruleTrigger } from "./trigger";
+import {
+  SavedSettings,
+  beyondThePage,
+  formatOf,
+  guiOf,
+  nameToOffer,
+  profileNote,
+  profileOf,
+  profileValues,
+  sameFileName,
+  settingsOf,
+} from "./profile";
+import { captureLabel } from "./names";
 import { Header } from "./components/Header";
 import { SaveAnswer, SaveProfileDialog } from "./components/SaveProfileDialog";
 import { HardwareConfig } from "./components/HardwareConfig";
@@ -38,22 +51,8 @@ import { CaptureControlBar } from "./components/CaptureControlBar";
 import { FileText } from "lucide-react";
 import "./App.css";
 
-// The hardware settings of the last session, so the app comes back the way it was left.
+// The hardware settings of the last session (SavedSettings), so the app comes back the way it was left.
 const SETTINGS_KEY = "ila-studio-settings-v1";
-
-interface SavedSettings {
-  selectedProfilePath: string;
-  serverUrl: string;
-  ltxPath: string;
-  tclPath: string;
-  deviceFilter: string;
-  omitJtagFreq: boolean;
-  jtagFreqHz: number;
-  selectedCoreIndex: number;
-  /** the cell name of that core: a list of cores read later has it at whatever position */
-  selectedCoreName?: string;
-  twinTurbo: boolean;
-}
 
 // How the buses of a design are written into the CSV: chosen in the probe list, kept per probe file.
 const FORMATS_KEY = "ila-studio-probe-formats-v1";
@@ -104,7 +103,7 @@ async function readProfiles(): Promise<ProfileInfo[]> {
 function loadSettings(): Partial<SavedSettings> | null {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    return raw ? (JSON.parse(raw) as Partial<SavedSettings>) : null;
+    return raw ? settingsOf(JSON.parse(raw)) : null;
   } catch {
     return null;
   }
@@ -145,14 +144,6 @@ const VIEWER_MAX_SAMPLES = 131072;
 // A second click that lands on the button right after it turned into "Stop" is the tail of a double-click.
 const STOP_GUARD_MS = 700;
 const NOTHING_COMPARED: string[] = [];
-
-/** "20250101_120000_unit/cap_run_001_0003": every single capture is called cap_run_001, the folder tells them apart */
-const captureLabel = (path: string) => {
-  const parts = path.split(/[\\/]/);
-  const file = (parts.pop() || path).replace(/\.(csv|ila)$/i, "");
-  const folder = parts.pop();
-  return folder ? `${folder}/${file}` : file;
-};
 
 /** What a progress line of the driver should put into the status bar, or null for Vivado's own chatter. */
 function statusFromLogLine(line: string): string | null {
@@ -272,8 +263,9 @@ export function App() {
     setShownSeq(waveSeq.current);
     setWaveform(res);
     // Keep the user's choice of plotted signals while successive captures carry the same signals - unless
-    // nothing of that choice exists in this capture, which would leave an empty viewer.
-    const names = res.signals.map((s) => s.name);
+    // nothing of that choice exists in this capture, which would leave an empty viewer. A signal is told by its
+    // hierarchical name, as a probe of the list is: two of them may share a leaf name.
+    const names = res.signals.map(probeKey);
     const key = names.join("|");
     const changed = key !== signalSetKey.current;
     signalSetKey.current = key;
@@ -560,6 +552,10 @@ export function App() {
     }
   };
 
+  /** "Show it here again". A window that cannot be closed says so: the click would otherwise do nothing at all
+   *  (the sentence is the backend's own, which names what could not be done). */
+  const handleDockAnalysis = () => void invoke("close_analysis_window").catch((e) => setStatusMessage(String(e)));
+
   useEffect(() => {
     let disposed = false;
     const unlisten: Array<() => void> = [];
@@ -652,7 +648,7 @@ export function App() {
     // The formats a profile names are those of its own probe file. A profile saved from the page names the buses
     // in full: it also speaks for a file of the same name in another folder - the design moved to another PC,
     // or built again elsewhere.
-    const of = profile?.data?.hardware?.ltx || "";
+    const of = profile ? profileValues(profile.data).ltx : "";
     const suggested =
       profile && (formatsKey(of) === key || (guiOf(profile.data) !== null && sameFileName(of, ltx))) ? profile.data?.capture?.probe_format : undefined;
     // `asSaved`: a profile saved from this page has just been selected. What it was saved with is no suggestion
@@ -815,7 +811,8 @@ export function App() {
     if (saved && (saved.ltxPath || saved.serverUrl)) {
       // the profile supplies the capture settings again; the hardware fields are the ones that were last used
       const profile = list.find((p) => p.path === saved.selectedProfilePath);
-      if (profile) applyProfile(profile, false);
+      // (what it names that cannot be used is said at every start, with the probe file or without)
+      const note = profile ? applyProfile(profile, false) : "";
       if (saved.serverUrl) setServerUrl(saved.serverUrl);
       if (saved.tclPath !== undefined) setTclPath(saved.tclPath);
       if (saved.deviceFilter) setDeviceFilter(saved.deviceFilter);
@@ -835,10 +832,12 @@ export function App() {
           }));
         }
       }
-      const ltx = saved.ltxPath || profile?.data?.hardware?.ltx || "";
+      const ltx = saved.ltxPath || (profile ? profileValues(profile.data).ltx : "");
       if (ltx) {
         setLtxPath(ltx);
-        void parseLtxFile(ltx, profile);
+        void parseLtxFile(ltx, profile, false, note);
+      } else if (note) {
+        setStatusMessage(note);
       }
     } else if (list.length > 0) {
       // first start: the most recently edited profile whose probe file is actually on this PC. Without such a
@@ -852,35 +851,43 @@ export function App() {
     setSettingsReady(true);
   };
 
-  /** `chosen`: picked in the Profile list just now (not the profile of the last session coming back at start) */
-  const applyProfile = (prof: ProfileInfo, withProbeFile = true, chosen = false) => {
+  /**
+   * `chosen`: picked in the Profile list just now (not the profile of the last session coming back at start).
+   * Returns what the status line has to say of the profile ("" for one taken as it is): `withProbeFile` false
+   * leaves the saying to the caller, who reads the probe file.
+   */
+  const applyProfile = (prof: ProfileInfo, withProbeFile = true, chosen = false): string => {
     setSelectedProfilePath(prof.path);
-    const hw = prof.data?.hardware || {};
-    const cap = prof.data?.capture || {};
-    const tools = prof.data?.tools || {};
+    // A profile is a file anyone can edit. Its values are taken only as the kind their keys hold (a number
+    // written as text is that number); what is not is left out here and named in the status line now - not by
+    // the backend when a capture is started, which would name neither the profile nor the key.
+    const named = profileValues(prof.data);
+    const note = profileNote(prof, named.ignored);
     // A profile saved from this page ("Save configuration") says more than one written for the capture script:
     // the mode, the rule the trigger was built from, the capture name, the core by its name, Twin Turbo.
     const gui = guiOf(prof.data);
     const format = gui ? formatOf(prof.data) : null;
 
-    if (hw.url || (gui && typeof hw.url === "string")) setServerUrl(hw.url || "");
-    setTclPath(tools.tcl_script || "");
-    setDeviceFilter(hw.device_filter || "*");
+    if (named.url || (gui && named.url !== null)) setServerUrl(named.url || "");
+    setTclPath(named.tclScript);
+    setDeviceFilter(named.deviceFilter || "*");
     setOmitJtagFreq(false);
-    setJtagFreqHz(hw.jtag_frequency_hz || 0);
-    wantedCore.current = { name: gui?.core || "", index: hw.ila_index || 0 };
-    setSelectedCoreIndex(hw.ila_index || 0);
+    setJtagFreqHz(named.jtagHz);
+    wantedCore.current = { name: gui?.core || "", index: named.ilaIndex };
+    setSelectedCoreIndex(named.ilaIndex);
     if (gui) setTwinTurbo(gui.twinTurbo);
-    if (withProbeFile && hw.ltx) {
-      setLtxPath(hw.ltx);
-      void parseLtxFile(hw.ltx, prof, chosen && gui !== null);
+    if (withProbeFile && named.ltx) {
+      setLtxPath(named.ltx);
+      void parseLtxFile(named.ltx, prof, chosen && gui !== null, note);
+    } else if (withProbeFile && note) {
+      setStatusMessage(note);
     }
 
     setCaptureConfig((c) => ({
       ...c,
-      position: cap.position ?? c.position,
-      timeoutMin: cap.timeout_min || c.timeoutMin,
-      samplePeriodNs: cap.sample_period_ns || c.samplePeriodNs,
+      position: named.position ?? c.position,
+      timeoutMin: named.timeoutMin || c.timeoutMin,
+      samplePeriodNs: named.samplePeriodNs || c.samplePeriodNs,
       ...(gui
         ? {
             mode: gui.mode,
@@ -888,13 +895,14 @@ export function App() {
             customTriggerStr: gui.customTrigger,
             // the page as it was: no capture name and a sample period of 0 (times in samples) are settings too
             captureName: gui.captureName ?? c.captureName,
-            ...(typeof cap.sample_period_ns === "number" && cap.sample_period_ns >= 0 ? { samplePeriodNs: cap.sample_period_ns } : {}),
+            ...(named.samplePeriodNs !== null ? { samplePeriodNs: named.samplePeriodNs } : {}),
             ...(format ? { format } : {}),
           }
-        : cap.trigger && cap.trigger !== "now"
-          ? { mode: "trigger_rule" as const, customTriggerStr: cap.trigger, activeRule: null }
+        : named.trigger && named.trigger !== "now"
+          ? { mode: "trigger_rule" as const, customTriggerStr: named.trigger, activeRule: null }
           : { customTriggerStr: "" }),
     }));
+    return note;
   };
 
   const handleProfileSelect = (path: string) => {
@@ -906,30 +914,40 @@ export function App() {
     }
   };
 
+  // Every read of a probe file is a process of its own, so the answers can overtake one another (two profiles
+  // picked in quick succession, a large file and a small one). Only the answer to the newest read counts: an
+  // older one - its probes, its failure, the end of "Parsing..." - belongs to a file nobody is waiting for.
+  const ltxSeq = useRef<number>(0);
+
   /** `profile`: the one being applied right now, whose selection is not in the state yet; `asSaved`: it was
-   *  saved from this page and has just been picked - see adoptFormats */
-  const parseLtxFile = async (pathOverride?: string, profile?: ProfileInfo, asSaved = false) => {
+   *  saved from this page and has just been picked - see adoptFormats; `note`: what there is to say of that
+   *  profile (see applyProfile), which stays in the status line in front of how the reading went */
+  const parseLtxFile = async (pathOverride?: string, profile?: ProfileInfo, asSaved = false, note = "") => {
     const targetPath = pathOverride || ltxPath;
     if (!targetPath) return;
 
+    const seq = ++ltxSeq.current;
+    const say = (text: string) => setStatusMessage(note ? `${note} ${text}` : text);
     setIsParsingLtx(true);
-    setStatusMessage("Reading the probe file...");
+    say("Reading the probe file...");
     try {
       const res: LtxResult = await invoke("parse_ltx", { path: targetPath });
+      if (seq !== ltxSeq.current) return;
       if (res.error) {
-        setStatusMessage(res.error);
+        say(res.error);
       } else {
         adoptCores(res.cores, targetPath);
         setProbes(res.probes);
         adoptFormats(targetPath, res.probes, profile ?? profiles.find((p) => p.path === selectedProfilePath), asSaved);
         setHubClockHz(res.hubClockHz || 0);
-        setSelectedWaveformSignals(res.probes.map((p) => p.name));
-        setStatusMessage(`Probe file: ${res.probes.length} probes in ${res.cores.length} ILA core(s).`);
+        // ticked by the hierarchical name: two probes may share a leaf name (see shownSignals)
+        setSelectedWaveformSignals(res.probes.map(probeKey));
+        say(`Probe file: ${res.probes.length} probes in ${res.cores.length} ILA core(s).`);
       }
     } catch (e) {
-      setStatusMessage(`Could not read the probe file: ${e}`);
+      if (seq === ltxSeq.current) say(`Could not read the probe file: ${e}`);
     } finally {
-      setIsParsingLtx(false);
+      if (seq === ltxSeq.current) setIsParsingLtx(false);
     }
   };
 
@@ -990,9 +1008,9 @@ export function App() {
     if (custom) return custom;
     const r = captureConfig.activeRule;
     if (!r || !r.probeName) return captureConfig.mode === "constant_capture" ? "now" : null;
-    // the hierarchical name is unambiguous where two probes share a leaf name
-    const probe = probes.find((p) => p.name === r.probeName);
-    return ruleTrigger(r, r.probeFullName || (probe ? probeKey(probe) : r.probeName));
+    // by the hierarchical name, which is unambiguous where two probes share a leaf name; the trigger card makes
+    // its preview with the same call and the same list
+    return ruleTrigger(r, ruleTarget(r, probes));
   };
 
   /**
@@ -1169,8 +1187,9 @@ export function App() {
     setIsStopping(true);
     setStatusMessage("Stopping the running job...");
     try {
-      const answer = await invoke<string>("stop_hardware_job");
-      if (answer.startsWith("Nothing")) setIsStopping(false);
+      // no job was in flight: nothing will end and take "Stopping..." away, so it is taken away here
+      const answer = await invoke<StopAnswer>("stop_hardware_job");
+      if (!answer.running) setIsStopping(false);
     } catch (e) {
       setStatusMessage(`Stop failed: ${e}`);
       setIsStopping(false);
@@ -1182,7 +1201,8 @@ export function App() {
     if (res.cores && res.cores.length > 0) adoptCores(res.cores, ltxPath, res.coreIndex);
     if (res.probes && res.probes.length > 0) {
       setProbes(res.probes);
-      setSelectedWaveformSignals(res.probes.map((p) => p.name));
+      // (the hardware names a bus without its range, the probe file with it: probeKey is the same for both)
+      setSelectedWaveformSignals(res.probes.map(probeKey));
       // the hardware was asked with the probe file in the field: the list is that file's now
       if (ltxPath) adoptFormats(ltxPath, res.probes, profiles.find((p) => p.path === selectedProfilePath));
     }
@@ -1278,16 +1298,17 @@ export function App() {
     );
   };
 
-  const handleToggleWaveformSignal = (name: string) => {
+  /** `key`: the probeKey of the probe whose "Plot" box was clicked */
+  const handleToggleWaveformSignal = (key: string) => {
     setSelectedWaveformSignals((prev) =>
-      prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name]
+      prev.includes(key) ? prev.filter((s) => s !== key) : [...prev, key]
     );
   };
 
   const handleSelectAllWaveformSignals = () => {
-    const listed = probesOfCore.map((p) => p.name);
-    if (listed.length > 0 && listed.every((name) => selectedWaveformSignals.includes(name))) {
-      setSelectedWaveformSignals((prev) => prev.filter((name) => !listed.includes(name)));
+    const listed = probesOfCore.map(probeKey);
+    if (listed.length > 0 && listed.every((key) => selectedWaveformSignals.includes(key))) {
+      setSelectedWaveformSignals((prev) => prev.filter((key) => !listed.includes(key)));
     } else {
       setSelectedWaveformSignals((prev) => [...new Set([...prev, ...listed])]);
     }
@@ -1368,12 +1389,14 @@ export function App() {
                   coresLocked={hwBusy || isDisconnecting}
                   onParseLtx={(path) => parseLtxFile(path)}
                   isParsing={isParsingLtx}
+                  onError={setStatusMessage}
                 />
 
                 <TriggerRuleBuilder
                   config={captureConfig}
                   onChangeConfig={changeCaptureConfig}
                   availableProbes={probesOfCore}
+                  allProbes={probes}
                   maxPosition={coreDepth > 0 ? coreDepth - 1 : 131071}
                 />
               </div>
@@ -1435,7 +1458,7 @@ export function App() {
                   <button className="btn btn-secondary btn-sm" onClick={handlePopOutAnalysis}>
                     Bring the window to the front
                   </button>
-                  <button className="btn btn-secondary btn-sm" onClick={() => void invoke("close_analysis_window")}>
+                  <button className="btn btn-secondary btn-sm" onClick={handleDockAnalysis}>
                     Show it here again
                   </button>
                 </div>
@@ -1457,7 +1480,7 @@ export function App() {
                   pending={captureIndex >= 0 && captures[captureIndex]?.path !== waveform?.filePath}
                 />
               }
-              captureImport={<CaptureImport onImport={(paths) => void importCaptures(paths)} />}
+              captureImport={<CaptureImport onImport={(paths) => void importCaptures(paths)} onError={setStatusMessage} />}
               captureCompare={
                 <CaptureCompare
                   items={captures}
@@ -1490,6 +1513,7 @@ export function App() {
         isStopping={isStopping}
         stopLabel={isCapturing ? "Stop Capture" : "Stop Connecting"}
         onLoadExistingCsv={(path) => void openCaptureFile(path)}
+        onError={setStatusMessage}
       />
 
       {savingProfile && (

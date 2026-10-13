@@ -1297,25 +1297,34 @@ async fn hardware_session(state: State<'_, AppState>) -> Result<Value, String> {
     Ok(lock(&state.session).clone())
 }
 
+/// What "Stop" found, as data (StopAnswer in src/types.ts). The page goes by these fields and never by the
+/// wording of a sentence: a sentence is for people, and rewording one must not change what the page does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct StopAnswer {
+    /// a job was in flight when the stop arrived; false: there was nothing to stop
+    running: bool,
+    /// it stayed silent beyond the grace and was killed, the bridge and its session with it
+    killed: bool,
+}
+
+/// The body of stop_hardware_job, on the job slot alone so that a test can call it: the job in flight is asked
+/// to end and waited for (see stop_job), and the answer says whether there was one at all.
+fn stop_running_job(jobs: &Mutex<Option<HwJob>>, grace: Duration) -> StopAnswer {
+    let Some(job) = lock(jobs).clone() else {
+        return StopAnswer { running: false, killed: false };
+    };
+    StopAnswer { running: true, killed: !stop_job(jobs, &job, grace) }
+}
+
 /// Ask the running hardware job to end. The bridge and the Tcl side watch for the stop file and then end the
 /// job in order; the Vivado session stays open for the next one. That normally takes about a second; the long
 /// grace is for a stop that arrives while Vivado is still starting or a large upload is being written - only a
 /// job that stays silent beyond it is killed, and with it the bridge and its session (the next job starts new
 /// ones; a killed session cannot put the cable's JTAG clock back, which the next connect repairs).
 #[tauri::command]
-async fn stop_hardware_job(state: State<'_, AppState>) -> Result<String, String> {
+async fn stop_hardware_job(state: State<'_, AppState>) -> Result<StopAnswer, String> {
     let jobs = state.job.clone();
-    blocking(move || {
-        let Some(job) = lock(&jobs).clone() else {
-            return Ok("Nothing is running.".to_string());
-        };
-        if stop_job(&jobs, &job, Duration::from_secs(90)) {
-            Ok("Stopped.".to_string())
-        } else {
-            Ok("Stopped (the session did not answer and was ended).".to_string())
-        }
-    })
-    .await
+    blocking(move || Ok(stop_running_job(&jobs, Duration::from_secs(90)))).await
 }
 
 /// The kind of hardware job in flight, if any. The page asks at start-up: after a reload its own state is gone
@@ -1764,6 +1773,53 @@ mod tests {
         // only a text is a message
         let odd = json!({ "error": 5 });
         assert_eq!(reject_error(odd.clone()), Ok(odd));
+    }
+
+    /// A job as the slot holds it. No process stands behind it (pid 0), so the last resort of a stop has
+    /// nothing to kill.
+    fn job_in_flight(scratch: &Scratch) -> HwJob {
+        HwJob { id: 7, pid: 0, stop_file: scratch.0.join("stop.flag"), kind: "capture" }
+    }
+
+    // The page reads these two fields by name (StopAnswer in src/types.ts): the names and what they mean are
+    // the contract between the two languages.
+    #[test]
+    fn stop_with_no_job_in_flight_answers_that_nothing_ran() {
+        let slot: Mutex<Option<HwJob>> = Mutex::new(None);
+        let answer = stop_running_job(&slot, Duration::from_secs(5));
+        assert_eq!(answer, StopAnswer { running: false, killed: false });
+        assert_eq!(serde_json::to_value(answer).expect("an answer of two fields"), json!({ "running": false, "killed": false }));
+    }
+
+    #[test]
+    fn stop_asks_the_job_in_flight_with_its_stop_file_and_waits_for_it() {
+        let scratch = Scratch::new("stop_in_order");
+        let job = job_in_flight(&scratch);
+        let slot = Arc::new(Mutex::new(Some(job.clone())));
+        // the job: it ends when it finds the stop file, as the bridge does
+        let (running, stop_file) = (slot.clone(), job.stop_file.clone());
+        let ended = std::thread::spawn(move || {
+            let until = Instant::now() + Duration::from_secs(20);
+            while Instant::now() < until && !stop_file.exists() {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let asked = fs::read(&stop_file).ok();
+            *lock(&running) = None;
+            asked
+        });
+        let answer = stop_running_job(&slot, Duration::from_secs(20));
+        assert_eq!(ended.join().expect("the job"), Some(b"stop".to_vec()));
+        assert_eq!(serde_json::to_value(answer).expect("an answer of two fields"), json!({ "running": true, "killed": false }));
+    }
+
+    #[test]
+    fn stop_reports_a_job_that_did_not_end_within_the_grace() {
+        let scratch = Scratch::new("stop_last_resort");
+        let slot = Mutex::new(Some(job_in_flight(&scratch)));
+        let answer = stop_running_job(&slot, Duration::ZERO);
+        assert_eq!(serde_json::to_value(answer).expect("an answer of two fields"), json!({ "running": true, "killed": true }));
+        // the slot is the job's own to clear, when it ends
+        assert!(lock(&slot).is_some());
     }
 
     fn no_hw_args() -> HwArgs {

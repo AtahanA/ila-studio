@@ -136,6 +136,17 @@ export interface HwResult {
   coreIndex?: number;
 }
 
+/**
+ * Answer of stop_hardware_job (StopAnswer in src-tauri/src/lib.rs): what "Stop" found, as data. The page goes by
+ * these fields, never by the wording of a sentence.
+ */
+export interface StopAnswer {
+  /** a hardware job was in flight when the stop arrived; false: there was nothing to stop */
+  running: boolean;
+  /** it did not end in order within the time it is given and was ended, the hardware session with it */
+  killed: boolean;
+}
+
 export type CaptureMode = "just_capture" | "trigger_rule" | "constant_capture";
 
 export type TriggerOperator1Bit = "1" | "0" | "R" | "F" | "B" | "X";

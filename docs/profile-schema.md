@@ -240,6 +240,18 @@ formats the probe list starts from, where none have been chosen for that probe f
 the mode becomes "Capture on Rule". From a profile saved from the page, the `gui` section and `capture.format`
 come back as well, and its probe formats take the place of what was chosen in the list.
 
+The page takes each of these values only as the kind its key holds. A number may be written as text
+(`"jtag_frequency_hz": "6000000"`), as the script accepts it for `hardware.ila_index` and
+`hardware.jtag_frequency_hz`. A value that cannot be used - text that is no number where a number belongs, a
+negative number, a number or a list where text belongs - is left out, as if the profile did not name the key,
+and the status line says so when the profile is selected, and at every start with it:
+`Profile "my-board": hardware.ila_index is not a number - left out (profiles\my-board.json).` A profile whose
+file cannot be read at all is named in the same place (`Could not read the profile ...`), and the page takes
+none of its values. A profile whose `hardware.ltx` is no text, or whose `hardware` is no section, is treated
+in that way too: the whole profile counts as unreadable, the values that could be used included, and the
+sentence after `Could not read the profile ...` does not name the key. (Only an empty value, `0` or `false`
+in these two places is left out like any other value.)
+
 With every hardware job the page then sends its own fields, and these win: hw_server, probe file, Tcl script
 and device filter (each only when its field is not empty; an empty field leaves the value of the profile in
 force), the ILA core, the JTAG clock, the trigger, position, timeout, export format, capture name and the

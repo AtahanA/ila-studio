@@ -9,6 +9,8 @@ import { FileText, FolderOpen } from "lucide-react";
 interface CaptureImportProps {
   /** the files and folders that were chosen; which of them are captures is for the receiver to find out */
   onImport: (paths: string[]) => void;
+  /** the file dialog could not be opened: the sentence to show (a release build has no console) */
+  onError: (text: string) => void;
 }
 
 // The first dialog of a session starts in the folder the captures are written to; after that Windows remembers
@@ -19,7 +21,7 @@ let startedInCaptures = false;
  * "Import": brings captures that are on disk into the list the navigator steps through - several files at once,
  * or everything in a folder (a session folder, or the folder that holds the sessions).
  */
-export const CaptureImport: React.FC<CaptureImportProps> = ({ onImport }) => {
+export const CaptureImport: React.FC<CaptureImportProps> = ({ onImport, onError }) => {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLSpanElement | null>(null);
 
@@ -66,7 +68,7 @@ export const CaptureImport: React.FC<CaptureImportProps> = ({ onImport }) => {
         onImport(paths);
       }
     } catch (e) {
-      console.error(e);
+      onError(`Could not open the file dialog: ${e}`);
     }
   };
 

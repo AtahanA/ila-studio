@@ -2,7 +2,20 @@
 // Copyright (C) 2026 Atahan Aggunlu
 
 import { describe, expect, it } from "vitest";
-import { type PageState, beyondThePage, formatOf, guiOf, nameToOffer, profileOf, sameFile, sameFileName } from "./profile";
+import {
+  type PageState,
+  beyondThePage,
+  formatOf,
+  guiOf,
+  nameToOffer,
+  numberOf,
+  profileNote,
+  profileOf,
+  profileValues,
+  sameFile,
+  sameFileName,
+  settingsOf,
+} from "./profile";
 import type { CaptureConfig, TriggerRule } from "./types";
 
 const capture = (more: Partial<CaptureConfig> = {}): CaptureConfig => ({
@@ -352,6 +365,266 @@ describe("beyondThePage", () => {
     expect(beyondThePage({ tools: { vivado: "C:/v" }, capture: { out: "D:/caps" }, watch: {} })).toBe(
       "the paths of the tools, the folder of the captures (D:/caps), the section watch of the capture script",
     );
+  });
+});
+
+describe("numberOf", () => {
+  it("takes a number as it is", () => {
+    expect(numberOf(6000000)).toBe(6000000);
+    expect(numberOf(0)).toBe(0);
+    expect(numberOf(-2.5)).toBe(-2.5);
+  });
+
+  it("takes text that spells a number in decimal", () => {
+    expect(numberOf("6000000")).toBe(6000000);
+    expect(numberOf(" 5 ")).toBe(5);
+    expect(numberOf("0.5")).toBe(0.5);
+    expect(numberOf(".5")).toBe(0.5);
+    expect(numberOf("-3")).toBe(-3);
+    expect(numberOf("6e6")).toBe(6000000);
+  });
+
+  it("is undefined for any other text", () => {
+    for (const text of ["", "   ", "abc", "5 MHz", "0x10", "1,5", "Infinity", "NaN", "1e", "--1"]) {
+      expect(numberOf(text), JSON.stringify(text)).toBeUndefined();
+    }
+  });
+
+  it("is undefined for what is neither a number nor text, and for a number that is none", () => {
+    for (const value of [null, undefined, true, false, [], [5], {}, { value: 5 }, NaN, Infinity, -Infinity]) {
+      expect(numberOf(value), String(value)).toBeUndefined();
+    }
+  });
+});
+
+describe("profileValues", () => {
+  const NOTHING = {
+    url: null,
+    ltx: "",
+    deviceFilter: "",
+    tclScript: "",
+    trigger: "",
+    jtagHz: 0,
+    ilaIndex: 0,
+    position: null,
+    timeoutMin: null,
+    samplePeriodNs: null,
+    ignored: [],
+  };
+
+  it("reads a profile as it is written by the rules", () => {
+    const data = {
+      tools: { tcl_script: "scripts/my.tcl" },
+      hardware: { url: "192.0.2.10:3121", ltx: "C:/d/top.ltx", device_filter: "xc7z020*", ila_index: 1, jtag_frequency_hz: 6000000 },
+      capture: { trigger: "rx_valid eq1'bR", position: 512, timeout_min: 0.5, sample_period_ns: 2.5 },
+    };
+    expect(profileValues(data)).toEqual({
+      url: "192.0.2.10:3121",
+      ltx: "C:/d/top.ltx",
+      deviceFilter: "xc7z020*",
+      tclScript: "scripts/my.tcl",
+      trigger: "rx_valid eq1'bR",
+      jtagHz: 6000000,
+      ilaIndex: 1,
+      position: 512,
+      timeoutMin: 0.5,
+      samplePeriodNs: 2.5,
+      ignored: [],
+    });
+  });
+
+  it("names nothing for a profile that names nothing", () => {
+    expect(profileValues({})).toEqual(NOTHING);
+    expect(profileValues({ hardware: {}, capture: {}, tools: {} })).toEqual(NOTHING);
+    expect(profileValues(null)).toEqual(NOTHING);
+    expect(profileValues("profile")).toEqual(NOTHING);
+  });
+
+  // what the capture script takes with int(): the profile works on the command line, so it works here
+  it("takes a number written as text for the number", () => {
+    const data = {
+      hardware: { ila_index: "1", jtag_frequency_hz: "6000000" },
+      capture: { position: "512", timeout_min: "5", sample_period_ns: " 2.5 " },
+    };
+    expect(profileValues(data)).toMatchObject({ ilaIndex: 1, jtagHz: 6000000, position: 512, timeoutMin: 5, samplePeriodNs: 2.5, ignored: [] });
+    // numbers, not text that looks like them: text would travel on into the request of a capture
+    expect(typeof profileValues(data).ilaIndex).toBe("number");
+    expect(typeof profileValues(data).timeoutMin).toBe("number");
+  });
+
+  it("rounds what counts something and leaves a time as it is", () => {
+    const data = { hardware: { ila_index: 1.6, jtag_frequency_hz: "5999999.6" }, capture: { position: 99.5, timeout_min: 0.25, sample_period_ns: 3.3 } };
+    expect(profileValues(data)).toMatchObject({ ilaIndex: 2, jtagHz: 6000000, position: 100, timeoutMin: 0.25, samplePeriodNs: 3.3, ignored: [] });
+  });
+
+  it("keeps a position and a sample period of 0, which are settings too", () => {
+    expect(profileValues({ capture: { position: 0, sample_period_ns: 0, timeout_min: 0 } })).toMatchObject({ position: 0, samplePeriodNs: 0, timeoutMin: 0, ignored: [] });
+  });
+
+  it("leaves out a negative number and says so", () => {
+    const data = { hardware: { ila_index: -1, jtag_frequency_hz: "-6000000" }, capture: { position: -5, timeout_min: -1, sample_period_ns: -0.5 } };
+    expect(profileValues(data)).toEqual({
+      ...NOTHING,
+      ignored: [
+        "hardware.ila_index is negative",
+        "hardware.jtag_frequency_hz is negative",
+        "capture.position is negative",
+        "capture.timeout_min is negative",
+        "capture.sample_period_ns is negative",
+      ],
+    });
+  });
+
+  it("leaves out what is no number where one belongs and says so", () => {
+    for (const value of ["fast", "", [1], { hz: 1 }, true, false]) {
+      const data = { hardware: { ila_index: value, jtag_frequency_hz: value }, capture: { position: value, timeout_min: value, sample_period_ns: value } };
+      expect(profileValues(data), JSON.stringify(value)).toEqual({
+        ...NOTHING,
+        ignored: [
+          "hardware.ila_index is not a number",
+          "hardware.jtag_frequency_hz is not a number",
+          "capture.position is not a number",
+          "capture.timeout_min is not a number",
+          "capture.sample_period_ns is not a number",
+        ],
+      });
+    }
+  });
+
+  it("leaves out a count the request of a capture cannot carry", () => {
+    const data = { hardware: { ila_index: 4294967296, jtag_frequency_hz: 1e300 }, capture: { position: "1e12", timeout_min: 1e9 } };
+    expect(profileValues(data)).toMatchObject({
+      ilaIndex: 0,
+      jtagHz: 0,
+      position: null,
+      timeoutMin: 1e9,
+      ignored: ["hardware.ila_index is too large", "hardware.jtag_frequency_hz is too large", "capture.position is too large"],
+    });
+    expect(profileValues({ hardware: { ila_index: 4294967295 } })).toMatchObject({ ilaIndex: 4294967295, ignored: [] });
+  });
+
+  it("leaves out what is no text where text belongs and says so", () => {
+    for (const value of [5, 0, true, false, ["C:/d/top.ltx"], { path: "C:/d/top.ltx" }]) {
+      const data = { tools: { tcl_script: value }, hardware: { url: value, ltx: value, device_filter: value }, capture: { trigger: value } };
+      expect(profileValues(data), JSON.stringify(value)).toEqual({
+        ...NOTHING,
+        ignored: [
+          "hardware.url is not a text",
+          "hardware.ltx is not a text",
+          "hardware.device_filter is not a text",
+          "capture.trigger is not a text",
+          "tools.tcl_script is not a text",
+        ],
+      });
+    }
+  });
+
+  it("takes null for a key that is not named, without a word", () => {
+    const data = {
+      tools: { tcl_script: null },
+      hardware: { url: null, ltx: null, device_filter: null, ila_index: null, jtag_frequency_hz: null },
+      capture: { trigger: null, position: null, timeout_min: null, sample_period_ns: null },
+    };
+    expect(profileValues(data)).toEqual(NOTHING);
+    expect(profileValues({ hardware: null, capture: null, tools: null })).toEqual(NOTHING);
+  });
+
+  it("tells an empty hw_server from none", () => {
+    expect(profileValues({ hardware: { url: "" } }).url).toBe("");
+    expect(profileValues({ hardware: {} }).url).toBeNull();
+  });
+
+  it("leaves text as it is written", () => {
+    expect(profileValues({ hardware: { ltx: " C:\\d\\top.ltx " }, capture: { trigger: " now " } })).toMatchObject({ ltx: " C:\\d\\top.ltx ", trigger: " now " });
+  });
+
+  it("says so when a section is no section, and reads the others", () => {
+    expect(profileValues({ hardware: ["url"], capture: "now", tools: 5 })).toEqual({
+      ...NOTHING,
+      ignored: ["hardware is not a section", "capture is not a section", "tools is not a section"],
+    });
+    expect(profileValues({ hardware: [], capture: { position: "7" } })).toMatchObject({ position: 7, ignored: ["hardware is not a section"] });
+  });
+});
+
+describe("profileNote", () => {
+  const profile = { name: "my-board", filename: "my-board.json" };
+
+  it("has nothing to say of a profile that was taken as it is", () => {
+    expect(profileNote(profile, [])).toBe("");
+  });
+
+  it("names the profile, its file and what was left out", () => {
+    expect(profileNote(profile, ["hardware.ila_index is not a number", "capture.timeout_min is negative"])).toBe(
+      'Profile "my-board": hardware.ila_index is not a number, capture.timeout_min is negative - left out (profiles\\my-board.json).',
+    );
+    expect(profileNote(profile, ["hardware.ltx is not a text"])).toBe('Profile "my-board": hardware.ltx is not a text - left out (profiles\\my-board.json).');
+  });
+
+  it("says that the file could not be read, whatever else there is", () => {
+    const broken = { ...profile, error: "Expecting ',' delimiter: line 5 column 3 (char 80)" };
+    expect(profileNote(broken, [])).toBe('Could not read the profile "my-board" (profiles\\my-board.json): Expecting \',\' delimiter: line 5 column 3 (char 80)');
+    expect(profileNote(broken, ["capture.position is negative"])).toMatch(/^Could not read the profile/);
+  });
+
+  it("calls a profile without a name after its file", () => {
+    expect(profileNote({ name: 5, filename: "lab.json" }, ["capture.position is negative"])).toBe('Profile "lab": capture.position is negative - left out (profiles\\lab.json).');
+    expect(profileNote({ name: "  ", filename: "lab.JSON" }, ["capture.position is negative"])).toMatch(/^Profile "lab": .* \(profiles\\lab\.JSON\)\.$/);
+  });
+});
+
+describe("settingsOf", () => {
+  const stored = {
+    selectedProfilePath: "C:\\tools\\profiles\\my-board.json",
+    serverUrl: "192.0.2.10:3121",
+    ltxPath: "C:/d/top.ltx",
+    tclPath: "",
+    deviceFilter: "xc7z020*",
+    omitJtagFreq: false,
+    jtagFreqHz: 6000000,
+    selectedCoreIndex: 1,
+    selectedCoreName: "u_ila_demo",
+    twinTurbo: true,
+  };
+
+  it("returns what the page stored", () => {
+    expect(settingsOf(stored)).toEqual(stored);
+    expect(settingsOf(JSON.parse(JSON.stringify(stored)))).toEqual(stored);
+  });
+
+  it("is null for what is no set of settings", () => {
+    for (const value of [null, undefined, "settings", 5, true, [stored]]) expect(settingsOf(value), String(value)).toBeNull();
+  });
+
+  it("leaves out what was never stored", () => {
+    expect(settingsOf({ serverUrl: "localhost:3121" })).toEqual({ serverUrl: "localhost:3121" });
+    expect(settingsOf({})).toEqual({});
+    // (not merely equal to nothing: the page asks whether an entry is there)
+    expect(settingsOf({})?.jtagFreqHz).toBeUndefined();
+    expect(settingsOf({})?.tclPath).toBeUndefined();
+    expect(settingsOf({})?.twinTurbo).toBeUndefined();
+  });
+
+  it("takes a count written as text for the number, rounded", () => {
+    expect(settingsOf({ jtagFreqHz: "6000000", selectedCoreIndex: "1" })).toEqual({ jtagFreqHz: 6000000, selectedCoreIndex: 1 });
+    expect(settingsOf({ jtagFreqHz: 5999999.6, selectedCoreIndex: 1.2 })).toEqual({ jtagFreqHz: 6000000, selectedCoreIndex: 1 });
+  });
+
+  it("leaves out an entry of the wrong kind", () => {
+    const odd = {
+      selectedProfilePath: 5,
+      serverUrl: ["localhost:3121"],
+      ltxPath: { path: "C:/d/top.ltx" },
+      tclPath: null,
+      deviceFilter: true,
+      omitJtagFreq: "yes",
+      jtagFreqHz: "fast",
+      selectedCoreIndex: -1,
+      selectedCoreName: 3,
+      twinTurbo: 1,
+    };
+    expect(settingsOf(odd)).toEqual({});
+    expect(settingsOf({ ...stored, jtagFreqHz: -6000000, selectedCoreIndex: 4294967296 })).toEqual({ ...stored, jtagFreqHz: undefined, selectedCoreIndex: undefined });
   });
 });
 

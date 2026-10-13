@@ -41,6 +41,14 @@ export function AnalysisWindow() {
   const [note, setNote] = useState("");
   // how an import started here ended: this window has no status line, the main window does the importing
   const [info, setInfo] = useState("");
+  // ... and what a click here could not do (a file dialog or this window that did not open or close): the line
+  // is shown for a while, as the result of an import is
+  const fade = useRef(0);
+  const showInfo = useCallback((text: string) => {
+    setInfo(text);
+    window.clearTimeout(fade.current);
+    fade.current = window.setTimeout(() => setInfo(""), 8000);
+  }, []);
   const [captures, setCaptures] = useState<CaptureItem[]>([]);
   const [captureIndex, setCaptureIndex] = useState(-1);
   const [live, setLive] = useState(false);
@@ -122,18 +130,13 @@ export function AnalysisWindow() {
     })
       .then(keep)
       .then(() => emit("analysis-hello"));
-    let fade = 0;
-    listen<string>("analysis-import-result", (e) => {
-      setInfo(typeof e.payload === "string" ? e.payload : "");
-      window.clearTimeout(fade);
-      fade = window.setTimeout(() => setInfo(""), 8000);
-    }).then(keep);
+    listen<string>("analysis-import-result", (e) => showInfo(typeof e.payload === "string" ? e.payload : "")).then(keep);
     return () => {
       disposed = true;
-      window.clearTimeout(fade);
+      window.clearTimeout(fade.current);
       unlisten.forEach((un) => un());
     };
-  }, []);
+  }, [showInfo]);
 
   return (
     <div className="analysis-window">
@@ -146,7 +149,10 @@ export function AnalysisWindow() {
           setSamplePeriodNs(ns);
           void emit("analysis-sample-period", ns);
         }}
-        onDock={() => void invoke("close_analysis_window")}
+        onDock={() =>
+          // a window that cannot be closed says so, in the backend's own sentence
+          void invoke("close_analysis_window").catch((e) => showInfo(String(e)))
+        }
         captureNav={
           // the main window owns the list and loads the capture; this window then follows as with any capture
           <CaptureNavigator
@@ -158,7 +164,7 @@ export function AnalysisWindow() {
             onSelect={(i) => void emit("analysis-navigate", i)}
           />
         }
-        captureImport={<CaptureImport onImport={(paths) => void emit("analysis-import", paths)} />}
+        captureImport={<CaptureImport onImport={(paths) => void emit("analysis-import", paths)} onError={showInfo} />}
         captureCompare={
           // as with the navigator: the main window takes the choice and announces it back
           <CaptureCompare

@@ -20,8 +20,9 @@ interface ProbeSelectorProps {
   onSelectTriggerProbe: (probe: IlaProbe) => void;
   /** the button of the probe that is the trigger takes the trigger away again */
   onClearTrigger: () => void;
+  /** the probes ticked for the waveform viewer, by probeKey: two probes may share a leaf name */
   selectedWaveformSignals: string[];
-  onToggleWaveformSignal: (name: string) => void;
+  onToggleWaveformSignal: (key: string) => void;
   onSelectAllWaveformSignals: () => void;
   /** how each bus is written into the CSV of a capture, by probeKey; a probe that is not named is unsigned */
   formats: Record<string, ProbeFormat>;
@@ -227,7 +228,7 @@ export const ProbeSelector: React.FC<ProbeSelectorProps> = ({
                 const isTriggerTarget = activeRule?.probeFullName
                   ? activeRule.probeFullName === probeKey(probe)
                   : activeRule?.probeName === probe.name;
-                const isSelectedPlot = selectedWaveformSignals.includes(probe.name);
+                const isSelectedPlot = selectedWaveformSignals.includes(probeKey(probe));
 
                 return (
                   <tr
@@ -239,7 +240,7 @@ export const ProbeSelector: React.FC<ProbeSelectorProps> = ({
                         type="checkbox"
                         className="checkbox-custom"
                         checked={isSelectedPlot}
-                        onChange={() => onToggleWaveformSignal(probe.name)}
+                        onChange={() => onToggleWaveformSignal(probeKey(probe))}
                         title="Include in waveform plot"
                       />
                     </td>

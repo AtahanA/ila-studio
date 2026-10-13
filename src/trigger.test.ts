@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Atahan Aggunlu
 
 import { describe, expect, it } from "vitest";
-import { compareValue, probeKey, ruleTrigger } from "./trigger";
+import { compareValue, probeKey, ruleTarget, ruleTrigger, shownSignals } from "./trigger";
 import type { TriggerRule } from "./types";
 
 const bit = (more: Partial<TriggerRule> = {}): TriggerRule => ({ probeName: "rx_valid", isBus: false, width: 1, ...more });
@@ -23,6 +23,52 @@ describe("probeKey", () => {
 
   it("only looks at the end of the name", () => {
     expect(probeKey({ fullName: "gen[3:0]/status" })).toBe("gen[3:0]/status");
+  });
+
+  // The probe file names a bus with its range, the hardware query without, and the column of a capture with it
+  // again: whatever is held by this key (the formats, what the viewer shows) must find all three.
+  it("is the same for a bus as the probe file, the hardware and a capture name it", () => {
+    const fromFile = probeKey({ fullName: "u_a/data[7:0]" });
+    const fromHardware = probeKey({ fullName: "u_a/data" });
+    const ofCapture = probeKey({ fullName: "u_a/data[7:0]" });
+    expect(fromFile).toBe("u_a/data");
+    expect(fromHardware).toBe(fromFile);
+    expect(ofCapture).toBe(fromFile);
+  });
+});
+
+describe("shownSignals", () => {
+  // the columns of a capture of a design with two instances of one module
+  const signals = [{ fullName: "u_a/valid" }, { fullName: "u_b/valid" }, { fullName: "u_a/data[7:0]" }, { fullName: "u_b/data[7:0]" }];
+
+  it("shows every signal while nothing is ticked", () => {
+    expect(shownSignals(signals, [])).toEqual(signals);
+  });
+
+  it("tells two signals of one leaf name apart", () => {
+    expect(shownSignals(signals, ["u_b/valid"])).toEqual([{ fullName: "u_b/valid" }]);
+    expect(shownSignals(signals, ["u_a/valid", "u_a/data"])).toEqual([{ fullName: "u_a/valid" }, { fullName: "u_a/data[7:0]" }]);
+  });
+
+  it("does not take a leaf name for a signal", () => {
+    expect(shownSignals(signals, ["valid"])).toEqual([]);
+  });
+
+  it("shows a bus that was ticked in the list of a probe file, which names it with its range", () => {
+    const ticked = [{ fullName: "u_b/data[7:0]" }].map(probeKey);
+    expect(shownSignals(signals, ticked)).toEqual([{ fullName: "u_b/data[7:0]" }]);
+  });
+
+  it("shows a bus that was ticked in the list the hardware told, which names it without its range", () => {
+    const ticked = [{ fullName: "u_b/data" }, { fullName: "u_a/valid" }].map(probeKey);
+    expect(shownSignals(signals, ticked)).toEqual([{ fullName: "u_a/valid" }, { fullName: "u_b/data[7:0]" }]);
+  });
+
+  it("keeps the order of the capture and hands on the signals themselves", () => {
+    const shown = shownSignals(signals, ["u_b/data", "u_a/valid"]);
+    expect(shown).toHaveLength(2);
+    expect(shown[0]).toBe(signals[0]);
+    expect(shown[1]).toBe(signals[3]);
   });
 });
 
@@ -110,6 +156,38 @@ describe("compareValue", () => {
     // wider than a JavaScript number is exact for
     expect(compareValue(bus({ width: 64, opMultiBit: "dec", value: "18446744073709551615" }))).toBe("eq64'u18446744073709551615");
     expect(() => compareValue(bus({ width: 64, opMultiBit: "dec", value: "18446744073709551616" }))).toThrow(/does not fit/);
+  });
+});
+
+describe("ruleTarget", () => {
+  const probes = [
+    { name: "valid", fullName: "u_a/valid" },
+    { name: "valid", fullName: "u_b/valid" },
+    { name: "adc_data", fullName: "u_top/adc_data[13:0]" },
+  ];
+
+  it("names the probe by the hierarchical name the rule carries", () => {
+    // not by the first probe of that leaf name in the list
+    expect(ruleTarget(bit({ probeName: "valid", probeFullName: "u_b/valid" }), probes)).toBe("u_b/valid");
+    // ... and also where the list does not hold the probe (another probe file was read since)
+    expect(ruleTarget(bit({ probeName: "valid", probeFullName: "u_c/valid" }), probes)).toBe("u_c/valid");
+  });
+
+  it("looks a rule without a hierarchical name up in the list, without the bus range", () => {
+    expect(ruleTarget(bus(), probes)).toBe("u_top/adc_data");
+    expect(ruleTarget(bit({ probeName: "valid" }), probes)).toBe("u_a/valid");
+    expect(ruleTarget(bit({ probeName: "valid", probeFullName: "" }), probes)).toBe("u_a/valid");
+  });
+
+  it("leaves the leaf name to the hardware side when the list has no such probe", () => {
+    expect(ruleTarget(bit(), probes)).toBe("rx_valid");
+    expect(ruleTarget(bit(), [])).toBe("rx_valid");
+  });
+
+  // what the capture is started with and what the preview shows are both made this way
+  it("gives the trigger of a probe that shares its leaf name with another", () => {
+    const rule = bit({ probeName: "valid", probeFullName: "u_b/valid" });
+    expect(ruleTrigger(rule, ruleTarget(rule, probes))).toBe("u_b/valid eq1'bR");
   });
 });
 

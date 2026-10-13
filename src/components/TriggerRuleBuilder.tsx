@@ -9,7 +9,7 @@ import {
   TriggerOperator1Bit,
   TriggerOperatorMultiBit,
 } from "../types";
-import { probeKey, ruleTrigger } from "../trigger";
+import { probeKey, ruleTarget, ruleTrigger } from "../trigger";
 import {
   Zap,
   Clock,
@@ -25,6 +25,8 @@ interface TriggerRuleBuilderProps {
   config: CaptureConfig;
   onChangeConfig: (cfg: Partial<CaptureConfig>) => void;
   availableProbes: IlaProbe[];
+  /** the probes of every core: the list a capture looks the probe of a rule up in, and so does the preview */
+  allProbes: IlaProbe[];
   /** last valid trigger position: buffer depth - 1 once the hardware has reported it */
   maxPosition: number;
 }
@@ -36,6 +38,7 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
   config,
   onChangeConfig,
   availableProbes,
+  allProbes,
   maxPosition,
 }) => {
   const setPosition = (raw: number) =>
@@ -56,9 +59,10 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
       return config.mode === "constant_capture" ? "now" : "";
     }
 
-    // the same function that builds what is sent, so the preview cannot differ from it
+    // the same functions that build what is sent - the probe by its hierarchical name, as a capture names it -
+    // so the preview cannot differ from it: it also tells two probes of one leaf name apart
     try {
-      return ruleTrigger(config.activeRule, config.activeRule.probeName);
+      return ruleTrigger(config.activeRule, ruleTarget(config.activeRule, allProbes));
     } catch (e) {
       return `invalid: ${e instanceof Error ? e.message : e}`;
     }
@@ -281,11 +285,12 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
                           >
                             Hex (h)
                           </button>
+                          {/* the letter is the one that is sent, as with hex and binary: 'u, unsigned decimal */}
                           <button
                             className={`btn-seg ${config.activeRule.opMultiBit === "dec" ? "active" : ""}`}
                             onClick={() => handleMultiBitOpChange("dec")}
                           >
-                            Dec (d)
+                            Dec (u)
                           </button>
                           <button
                             className={`btn-seg ${config.activeRule.opMultiBit === "bin" ? "active" : ""}`}

@@ -157,7 +157,7 @@ The card "Trigger Rules & Capture Mode". The mode decides the label of the captu
 - 1-bit probes: **Rising Edge (R)** `eq1'bR`, **Falling Edge (F)** `eq1'bF`, **High (1)** `eq1'b1`, **Low (0)**
   `eq1'b0`, **Either (B)** `eq1'bB`.
 - Buses: **Value Format** and **Match Value**. **Hex (h)** is sent as `eq<W>'h<value>` and **Bin (b)** as
-  `eq<W>'b<value>`, padded with zeros to every digit of the probe width (`eq14'h003F`). **Dec (d)** is sent as
+  `eq<W>'b<value>`, padded with zeros to every digit of the probe width (`eq14'h003F`). **Dec (u)** is sent as
   `eq<W>'u<value>`, unsigned decimal, because Vivado 2017.4 does not know `'d`. Blanks, underscores and a
   leading `0x` are dropped; `x` is a don't-care digit in hex and binary. A value with more digits than the
   probe has, or one that does not fit into the probe width (`FFFF` or decimal 16384 for a 14-bit probe), is
@@ -177,8 +177,8 @@ refused - both with the candidates named.
 - **Timeout (Minutes)**: how long to wait for the trigger.
 - **Export Format**: **CSV (fastest)**, **Both (.csv + .ila)** or **ILA archive only (.ila)**.
 - **Vivado ILA Trigger Expression Preview**: the trigger, position and timeout as they will be used, e.g.
-  `trigger: "rx_valid eq1'bR" | position: 1000 | timeout: 1m`. For a rule the preview shows the short name of
-  the probe; the capture itself names the probe by its full hierarchical name.
+  `trigger: "u_top/rx_valid eq1'bR" | position: 1000 | timeout: 1m`. For a rule the preview names the probe by
+  its full hierarchical name, as the capture itself does.
 
 ## The hardware session
 
@@ -229,8 +229,8 @@ used.
 - **Format.** The CSV is what Vivado exports: the columns `Sample in Buffer`, `Sample in Window` and
   `TRIGGER`, then one column for each probe. Buses are written in unsigned decimal unless another format was
   chosen in the probe list.
-- **Open File** (bottom bar) shows a `.csv` or `.ila` file from disk. **Import** in the Signal Analysis brings
-  many captures in at once, `.csv.gz` included.
+- **Open File** (bottom bar) shows a `.csv`, `.csv.gz` or `.ila` file from disk. **Import** in the Signal
+  Analysis brings many captures in at once.
 - **Size.** A capture file is read a piece at a time and is not held in memory as a whole. A file that holds
   more than 2 GB of CSV text is refused with a sentence that says so (for a `.csv.gz` and a `.ila`: the text
   they unpack to); the deepest core with the widest probes fills a fraction of that. A probe file is read up

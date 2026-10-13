@@ -16,6 +16,8 @@ interface CaptureControlBarProps {
   /** what the stop button ends: a capture, or connecting */
   stopLabel?: string;
   onLoadExistingCsv: (path: string) => void;
+  /** the file dialog could not be opened: the sentence for the status line (a release build has no console) */
+  onError: (text: string) => void;
   /** the Vivado hardware session that is kept open between jobs */
   session: HwSession;
   /** a job is running, or the session is being closed: the connection button waits */
@@ -43,6 +45,7 @@ export const CaptureControlBar: React.FC<CaptureControlBarProps> = ({
   isStopping,
   stopLabel,
   onLoadExistingCsv,
+  onError,
   session,
   sessionBusy,
   onToggleConnection,
@@ -54,13 +57,14 @@ export const CaptureControlBar: React.FC<CaptureControlBarProps> = ({
     try {
       const selected = await open({
         multiple: false,
-        filters: [{ name: "ILA Capture", extensions: ["csv", "ila"] }],
+        // "gz" for .csv.gz, as "Import" offers it: a recording made from the command line is gzipped
+        filters: [{ name: "ILA Capture", extensions: ["csv", "gz", "ila"] }],
       });
       if (selected && typeof selected === "string") {
         onLoadExistingCsv(selected);
       }
     } catch (e) {
-      console.error(e);
+      onError(`Could not open the file dialog: ${e}`);
     }
   };
 
@@ -82,7 +86,7 @@ export const CaptureControlBar: React.FC<CaptureControlBarProps> = ({
         <button
           className="btn btn-secondary btn-small"
           onClick={handleBrowseExistingCsv}
-          title="Open an existing .csv or .ila file from disk"
+          title="Open an existing .csv, .csv.gz or .ila file from disk"
         >
           <FolderOpen size={14} />
           <span>Open File</span>

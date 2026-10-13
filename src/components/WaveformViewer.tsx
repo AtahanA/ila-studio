@@ -6,6 +6,7 @@ import { SignalData, WaveformResult } from "../types";
 import { Extremes, envelopeOf, extremes, formatSI, toSigned } from "../analysis";
 import { drawCurve } from "../plotDraw";
 import { plotPalette, useTheme } from "../theme";
+import { probeKey, shownSignals } from "../trigger";
 import {
   ZoomIn,
   ZoomOut,
@@ -32,6 +33,7 @@ const hexOf = (v: number, width: number) => `0x${(v < 0 ? v + 2 ** width : v).to
 
 interface WaveformViewerProps {
   waveform: WaveformResult | null;
+  /** the signals ticked in the probe list, by probeKey (none ticked: all are shown) */
   selectedSignals: string[];
   /** buffer index of the trigger sample of the capture on screen */
   triggerPosition: number;
@@ -60,15 +62,12 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
   const [zoomLevel, setZoomLevel] = useState(1.0);
   const [panOffset, setPanOffset] = useState(0); // in samples
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  // the buses drawn as an analog wave, by probeKey like the ticks: of two buses of one leaf name, the one clicked
   const [analogModeMap, setAnalogModeMap] = useState<Record<string, boolean>>({});
   const [containerWidth, setContainerWidth] = useState(0);
   const drag = useRef<{ startX: number; startOffset: number } | null>(null);
 
-  const displayedSignals = useMemo(() => {
-    if (!waveform) return [];
-    if (selectedSignals.length === 0) return waveform.signals;
-    return waveform.signals.filter((s) => selectedSignals.includes(s.name));
-  }, [waveform, selectedSignals]);
+  const displayedSignals = useMemo(() => (waveform ? shownSignals(waveform.signals, selectedSignals) : []), [waveform, selectedSignals]);
 
   const totalSamples = waveform ? waveform.sampleIndices.length : 0;
   const maxZoom = Math.max(1, totalSamples / MIN_VISIBLE_SAMPLES);
@@ -87,10 +86,10 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
     total: totalSamples,
   };
 
-  const toggleAnalogMode = (name: string) => {
+  const toggleAnalogMode = (key: string) => {
     setAnalogModeMap((prev) => ({
       ...prev,
-      [name]: !prev[name],
+      [key]: !prev[key],
     }));
   };
 
@@ -191,7 +190,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
     // Draw signals
     displayedSignals.forEach((sig, idx) => {
       const yBase = RULER_HEIGHT + idx * ROW_HEIGHT;
-      const isAnalog = analogModeMap[sig.name] || false;
+      const isAnalog = analogModeMap[probeKey(sig)] || false;
       const vals = sig.isBus && isAnalog ? waveValues(sig) : sig.values;
 
       // Track row separator
@@ -388,7 +387,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
                 hoverIndex !== null && sig.values[hoverIndex] !== undefined
                   ? sig.values[hoverIndex]
                   : sig.values[0] ?? 0;
-              const isAnalog = analogModeMap[sig.name] || false;
+              const isAnalog = analogModeMap[probeKey(sig)] || false;
 
               return (
                 <div key={sig.fullName} className="signal-row-label">
@@ -408,7 +407,7 @@ export const WaveformViewer: React.FC<WaveformViewerProps> = ({
                     {sig.isBus && (
                       <button
                         className={`btn-mode-toggle ${isAnalog ? "active" : ""}`}
-                        onClick={() => toggleAnalogMode(sig.name)}
+                        onClick={() => toggleAnalogMode(probeKey(sig))}
                         title={isAnalog ? "Switch to Hex Bus" : "Switch to Analog Wave"}
                       >
                         <TrendingUp size={12} />
