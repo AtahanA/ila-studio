@@ -78,10 +78,18 @@ export const SaveProfileDialog: React.FC<SaveProfileDialogProps> = ({ suggested,
   };
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    // The dialog is marked on this element and not on the card, as the log window has it: the card is the form,
+    // and a form may not take the role of a dialog.
+    <div
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="save-profile-title"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
       <form className="modal-card save-profile-card" onSubmit={submit}>
         <div className="modal-header">
-          <h3>Save configuration</h3>
+          <h3 id="save-profile-title">Save configuration</h3>
           <button type="button" className="btn-close" onClick={onClose} aria-label="Close">
             ×
           </button>

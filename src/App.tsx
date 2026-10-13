@@ -1351,15 +1351,20 @@ export function App() {
         onShowLogDetails={openLogDetails}
       />
 
-      {/* Navigation Tabs */}
-      <div className="nav-tabs">
+      {/* Navigation Tabs. Which of the two is shown is said as a state as well: a class alone tells a screen
+          reader nothing. */}
+      <div className="nav-tabs" role="tablist">
         <button
+          role="tab"
+          aria-selected={activeTab === "capture"}
           className={`nav-tab ${activeTab === "capture" ? "active" : ""}`}
           onClick={() => setActiveTab("capture")}
         >
           ILA Capture & Trigger Rules
         </button>
         <button
+          role="tab"
+          aria-selected={activeTab === "analysis"}
           className={`nav-tab ${activeTab === "analysis" ? "active" : ""}`}
           onClick={() => setActiveTab("analysis")}
         >

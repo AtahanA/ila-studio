@@ -208,6 +208,7 @@ export const CaptureCompare: React.FC<CaptureCompareProps> = ({ items, chosen, o
               <Search size={13} className="search-icon" />
               <input
                 className="search-input"
+                aria-label="Filter the captures by name or number"
                 placeholder="filter by name or number..."
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}

@@ -128,13 +128,14 @@ export const HardwareConfig: React.FC<HardwareConfigProps> = ({
       <div className="card-body">
         {/* LTX File Path Input */}
         <div className="form-group full-width">
-          <label className="form-label">
+          <label className="form-label" htmlFor="hw-ltx-path">
             <FileCode size={14} />
             <span>Vivado Probe File (.ltx)</span>
             <span className="required-star">*</span>
           </label>
           <div className="input-with-actions">
             <input
+              id="hw-ltx-path"
               type="text"
               className="text-input"
               value={ltxPath}
@@ -164,7 +165,7 @@ export const HardwareConfig: React.FC<HardwareConfigProps> = ({
         {/* Tcl Script Path Input */}
         <div className="form-group full-width">
           <div className="form-label-with-toggle">
-            <label className="form-label">
+            <label className="form-label" htmlFor="hw-tcl-path">
               <FileCode size={14} />
               <span>Vivado Tcl Script (.tcl)</span>
               <span className="badge-chip-inline">REPL / Automation Script</span>
@@ -172,6 +173,7 @@ export const HardwareConfig: React.FC<HardwareConfigProps> = ({
           </div>
           <div className="input-with-actions">
             <input
+              id="hw-tcl-path"
               type="text"
               className="text-input"
               value={tclPath}
@@ -192,11 +194,12 @@ export const HardwareConfig: React.FC<HardwareConfigProps> = ({
         {/* Server & JTAG */}
         <div className="form-grid-3">
           <div className="form-group">
-            <label className="form-label">
+            <label className="form-label" htmlFor="hw-server-url">
               <Server size={14} />
               <span>hw_server URL</span>
             </label>
             <input
+              id="hw-server-url"
               type="text"
               className="text-input"
               value={serverUrl}
@@ -206,11 +209,12 @@ export const HardwareConfig: React.FC<HardwareConfigProps> = ({
           </div>
 
           <div className="form-group">
-            <label className="form-label">
+            <label className="form-label" htmlFor="hw-device-filter">
               <Cpu size={14} />
               <span>Device Filter</span>
             </label>
             <input
+              id="hw-device-filter"
               type="text"
               className="text-input"
               value={deviceFilter}
@@ -221,12 +225,13 @@ export const HardwareConfig: React.FC<HardwareConfigProps> = ({
           </div>
 
           <div className="form-group">
-            <label className="form-label">
+            <label className="form-label" htmlFor="hw-tck">
               <Radio size={14} />
               <span>JTAG Clock (TCK)</span>
             </label>
             <div className="input-with-actions tck-row">
               <select
+                id="hw-tck"
                 className="select-input"
                 value={auto ? 0 : jtagFreqHz}
                 onChange={(e) => chooseHz(Number(e.target.value))}
@@ -245,6 +250,7 @@ export const HardwareConfig: React.FC<HardwareConfigProps> = ({
                 min="0"
                 max="100"
                 className="text-input tck-custom"
+                aria-label="JTAG clock of your own, in MHz"
                 placeholder="MHz"
                 value={auto ? "" : jtagFreqHz / 1000000}
                 onChange={(e) => {

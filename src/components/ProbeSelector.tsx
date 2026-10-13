@@ -126,6 +126,7 @@ export const ProbeSelector: React.FC<ProbeSelectorProps> = ({
           <input
             type="text"
             className="search-input"
+            aria-label="Search probes by name or hierarchy"
             placeholder="Search probes by name or hierarchy..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -133,21 +134,24 @@ export const ProbeSelector: React.FC<ProbeSelectorProps> = ({
         </div>
 
         {/* Filter Pills */}
-        <div className="filter-group">
+        <div className="filter-group" role="group" aria-label="Kind of probes listed">
           <button
             className={`filter-btn ${filterType === "all" ? "active" : ""}`}
+            aria-pressed={filterType === "all"}
             onClick={() => setFilterType("all")}
           >
             All ({probes.length})
           </button>
           <button
             className={`filter-btn ${filterType === "single" ? "active" : ""}`}
+            aria-pressed={filterType === "single"}
             onClick={() => setFilterType("single")}
           >
             <ToggleLeft size={13} /> 1-Bit ({singleCount})
           </button>
           <button
             className={`filter-btn ${filterType === "bus" ? "active" : ""}`}
+            aria-pressed={filterType === "bus"}
             onClick={() => setFilterType("bus")}
           >
             <Hash size={13} /> Buses ({busCount})
@@ -241,6 +245,8 @@ export const ProbeSelector: React.FC<ProbeSelectorProps> = ({
                         className="checkbox-custom"
                         checked={isSelectedPlot}
                         onChange={() => onToggleWaveformSignal(probeKey(probe))}
+                        // which probe the box belongs to: the tooltip is the same in every row
+                        aria-label={`Plot ${probe.fullName}`}
                         title="Include in waveform plot"
                       />
                     </td>

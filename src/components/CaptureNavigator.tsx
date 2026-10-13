@@ -119,6 +119,9 @@ export const CaptureNavigator: React.FC<CaptureNavigatorProps> = ({ items, index
       </button>
       <button
         className={`btn-tiny capture-nav-index ${open ? "on" : ""} ${pending ? "pending" : ""}`}
+        // it opens the list of captures: said, with whether the list is open, as Compare says it of its menu
+        aria-haspopup="true"
+        aria-expanded={open}
         disabled={total === 0}
         onClick={() => setOpen((o) => !o)}
         title={

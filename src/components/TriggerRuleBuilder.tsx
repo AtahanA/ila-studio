@@ -144,10 +144,12 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
       </div>
 
       <div className="card-body">
-        {/* Mode Selector Tabs */}
-        <div className="mode-selector">
+        {/* Mode Selector Tabs. Of these, and of the segmented choices below, the one that applies is also said
+            as a state (aria-pressed): its colour alone tells a screen reader nothing. */}
+        <div className="mode-selector" role="group" aria-label="Capture mode">
           <button
             className={`mode-btn ${config.mode === "just_capture" ? "active" : ""}`}
+            aria-pressed={config.mode === "just_capture"}
             onClick={() => handleModeChange("just_capture")}
           >
             <Zap size={16} />
@@ -159,6 +161,7 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
 
           <button
             className={`mode-btn ${config.mode === "trigger_rule" ? "active" : ""}`}
+            aria-pressed={config.mode === "trigger_rule"}
             onClick={() => handleModeChange("trigger_rule")}
           >
             <Crosshair size={16} />
@@ -170,6 +173,7 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
 
           <button
             className={`mode-btn ${config.mode === "constant_capture" ? "active" : ""}`}
+            aria-pressed={config.mode === "constant_capture"}
             onClick={() => handleModeChange("constant_capture")}
           >
             <InfinityIcon size={16} />
@@ -186,12 +190,13 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
             <div className="rule-config-grid">
               {/* Select Target Probe */}
               <div className="form-group">
-                <label className="form-label">
+                <label className="form-label" htmlFor="trigger-probe">
                   <Sliders size={14} />
                   <span>Select Trigger Probe</span>
                 </label>
                 <div className="input-with-actions">
                   <select
+                    id="trigger-probe"
                     className="select-input trigger-probe-select"
                     value={ruleInList ? selectedKey : config.activeRule ? STALE_RULE : ""}
                     onChange={(e) => handleProbeSelect(e.target.value)}
@@ -230,12 +235,14 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
                   {!config.activeRule.isBus ? (
                     /* 1-Bit Probes */
                     <div className="form-group">
-                      <label className="form-label">
+                      {/* a label of several buttons: it names their group */}
+                      <label className="form-label" id="trigger-edge-label">
                         <span>Trigger Transition / State</span>
                       </label>
-                      <div className="btn-group-segmented">
+                      <div className="btn-group-segmented" role="group" aria-labelledby="trigger-edge-label">
                         <button
                           className={`btn-seg ${config.activeRule.op1Bit === "R" ? "active" : ""}`}
+                          aria-pressed={config.activeRule.op1Bit === "R"}
                           onClick={() => handle1BitOpChange("R")}
                           title="Rising Edge: 0 -> 1 transition"
                         >
@@ -243,6 +250,7 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
                         </button>
                         <button
                           className={`btn-seg ${config.activeRule.op1Bit === "F" ? "active" : ""}`}
+                          aria-pressed={config.activeRule.op1Bit === "F"}
                           onClick={() => handle1BitOpChange("F")}
                           title="Falling Edge: 1 -> 0 transition"
                         >
@@ -250,6 +258,7 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
                         </button>
                         <button
                           className={`btn-seg ${config.activeRule.op1Bit === "1" ? "active" : ""}`}
+                          aria-pressed={config.activeRule.op1Bit === "1"}
                           onClick={() => handle1BitOpChange("1")}
                           title="High Level: == 1"
                         >
@@ -257,6 +266,7 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
                         </button>
                         <button
                           className={`btn-seg ${config.activeRule.op1Bit === "0" ? "active" : ""}`}
+                          aria-pressed={config.activeRule.op1Bit === "0"}
                           onClick={() => handle1BitOpChange("0")}
                           title="Low Level: == 0"
                         >
@@ -264,6 +274,7 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
                         </button>
                         <button
                           className={`btn-seg ${config.activeRule.op1Bit === "B" ? "active" : ""}`}
+                          aria-pressed={config.activeRule.op1Bit === "B"}
                           onClick={() => handle1BitOpChange("B")}
                           title="Either Edge: any transition"
                         >
@@ -275,12 +286,13 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
                     /* Multi-Bit Probes */
                     <>
                       <div className="form-group">
-                        <label className="form-label">
+                        <label className="form-label" id="trigger-radix-label">
                           <span>Value Format</span>
                         </label>
-                        <div className="btn-group-segmented">
+                        <div className="btn-group-segmented" role="group" aria-labelledby="trigger-radix-label">
                           <button
                             className={`btn-seg ${config.activeRule.opMultiBit === "hex" ? "active" : ""}`}
+                            aria-pressed={config.activeRule.opMultiBit === "hex"}
                             onClick={() => handleMultiBitOpChange("hex")}
                           >
                             Hex (h)
@@ -288,12 +300,14 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
                           {/* the letter is the one that is sent, as with hex and binary: 'u, unsigned decimal */}
                           <button
                             className={`btn-seg ${config.activeRule.opMultiBit === "dec" ? "active" : ""}`}
+                            aria-pressed={config.activeRule.opMultiBit === "dec"}
                             onClick={() => handleMultiBitOpChange("dec")}
                           >
                             Dec (u)
                           </button>
                           <button
                             className={`btn-seg ${config.activeRule.opMultiBit === "bin" ? "active" : ""}`}
+                            aria-pressed={config.activeRule.opMultiBit === "bin"}
                             onClick={() => handleMultiBitOpChange("bin")}
                           >
                             Bin (b)
@@ -302,10 +316,11 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
                       </div>
 
                       <div className="form-group">
-                        <label className="form-label">
+                        <label className="form-label" htmlFor="trigger-value">
                           <span>Match Value</span>
                         </label>
                         <input
+                          id="trigger-value"
                           type="text"
                           className="text-input"
                           placeholder={
@@ -327,11 +342,12 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
 
             {/* A hand-written condition (also where a profile's trigger shows up); it wins over the rule above */}
             <div className="form-group full-width">
-              <label className="form-label">
+              <label className="form-label" htmlFor="trigger-custom">
                 <Terminal size={14} />
                 <span>Custom trigger expression (optional, overrides the rule)</span>
               </label>
               <input
+                id="trigger-custom"
                 type="text"
                 className="text-input"
                 placeholder={`<probe> <compare-value>, e.g. my_valid eq1'bR or state eq4'h3`}
@@ -345,13 +361,15 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
         {/* Capture Buffer Parameters: Position, Timeout, Format */}
         <div className="capture-params-grid">
           <div className="form-group">
-            <label className="form-label">
+            {/* one label for the slider and the number beside it: bound to the number, and the slider's name */}
+            <label className="form-label" id="capture-position-label" htmlFor="capture-position">
               <Clock size={14} />
               <span>Pre-Trigger Position (Samples)</span>
             </label>
             <div className="slider-with-number">
               <input
                 type="range"
+                aria-labelledby="capture-position-label"
                 min="0"
                 max={maxPosition}
                 step="1"
@@ -360,6 +378,7 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
                 className="range-slider"
               />
               <input
+                id="capture-position"
                 type="number"
                 className="number-input"
                 min={0}
@@ -372,11 +391,12 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
           </div>
 
           <div className="form-group">
-            <label className="form-label">
+            <label className="form-label" htmlFor="capture-timeout">
               <Clock size={14} />
               <span>Timeout (Minutes)</span>
             </label>
             <input
+              id="capture-timeout"
               type="number"
               min="0.1"
               max="720"
@@ -389,11 +409,12 @@ export const TriggerRuleBuilder: React.FC<TriggerRuleBuilderProps> = ({
           </div>
 
           <div className="form-group">
-            <label className="form-label">
+            <label className="form-label" htmlFor="capture-format">
               <Settings size={14} />
               <span>Export Format</span>
             </label>
             <select
+              id="capture-format"
               className="select-input"
               value={config.format}
               onChange={(e) => onChangeConfig({ format: e.target.value as CaptureConfig["format"] })}

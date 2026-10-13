@@ -76,6 +76,8 @@ export const CaptureImport: React.FC<CaptureImportProps> = ({ onImport, onError 
     <span className="capture-import" ref={rootRef}>
       <button
         className={`btn btn-secondary btn-sm capture-import-btn ${open ? "on" : ""}`}
+        aria-haspopup="true"
+        aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         title="Bring captures from disk into this list, to look at them again: several files, or a whole folder"
       >

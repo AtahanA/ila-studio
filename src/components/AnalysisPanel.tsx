@@ -991,6 +991,7 @@ const PaneCard = React.memo<PaneCardProps>(function PaneCard({
         <div className="analysis-pane-actions">
           <button
             className={`btn-tiny ${pane.mode === "fft" ? "on" : ""}`}
+            aria-pressed={pane.mode === "fft"}
             title="Spectrum of these signals over what this plot shows (or between cursors A and B)"
             onClick={() => {
               actions.updatePane(pane.id, (p) => ({ ...p, mode: p.mode === "fft" ? "time" : "fft" }));
@@ -1560,7 +1561,13 @@ const SignalList = React.memo<SignalListProps>(function SignalList({ waveform, c
       <div className="analysis-signals-search">
         <div className="search-box">
           <Search size={13} className="search-icon" />
-          <input className="search-input" placeholder="filter..." value={filter} onChange={(e) => setFilter(e.target.value)} />
+          <input
+            className="search-input"
+            aria-label="Filter the signals"
+            placeholder="filter..."
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
         </div>
       </div>
       {!comparing ? (
@@ -2161,6 +2168,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           </button>
           <button
             className={`btn btn-secondary btn-sm ${linkX ? "on" : ""}`}
+            aria-pressed={linkX}
             onClick={toggleLink}
             title={
               linkX
@@ -2172,13 +2180,16 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             <span>{linkX ? "Zoom: all plots" : "Zoom: each plot"}</span>
           </button>
           <div className="analysis-toolbar-group">
-            <span className="analysis-toolbar-label">X axis</span>
-            <div className="btn-group-segmented">
-              <button className={`btn-seg ${!timeAxis ? "active" : ""}`} onClick={() => setXUnit("samples")}>
+            <span className="analysis-toolbar-label" id="analysis-x-axis-label">
+              X axis
+            </span>
+            <div className="btn-group-segmented" role="group" aria-labelledby="analysis-x-axis-label">
+              <button className={`btn-seg ${!timeAxis ? "active" : ""}`} aria-pressed={!timeAxis} onClick={() => setXUnit("samples")}>
                 samples
               </button>
               <button
                 className={`btn-seg ${timeAxis ? "active" : ""}`}
+                aria-pressed={timeAxis}
                 onClick={() => setXUnit("time")}
                 title="Time relative to the trigger, from the sample period on the right"
               >
@@ -2187,22 +2198,30 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
             </div>
           </div>
           <div className="analysis-toolbar-group" title="Period of the ILA clock: it turns samples into time and frequency">
-            <span className="analysis-toolbar-label">sample period</span>
+            <span className="analysis-toolbar-label" id="analysis-period-label">
+              sample period
+            </span>
             <input
               type="number"
               className="number-input"
+              aria-labelledby="analysis-period-label analysis-period-unit"
               min={0}
               step="any"
               value={samplePeriodNs}
               onChange={(e) => onSamplePeriodChange(Math.max(0, Number(e.target.value) || 0))}
             />
-            <span className="analysis-toolbar-label">ns{period > 0 ? ` = ${formatSI(1 / period, "Hz")}` : ""}</span>
+            <span className="analysis-toolbar-label" id="analysis-period-unit">
+              ns{period > 0 ? ` = ${formatSI(1 / period, "Hz")}` : ""}
+            </span>
           </div>
           <div className="analysis-toolbar-group">
-            <span className="analysis-toolbar-label">click places</span>
-            <div className="btn-group-segmented">
+            <span className="analysis-toolbar-label" id="analysis-click-label">
+              click places
+            </span>
+            <div className="btn-group-segmented" role="group" aria-labelledby="analysis-click-label">
               <button
                 className={`btn-seg ${cursorMode === "x" ? "active" : ""}`}
+                aria-pressed={cursorMode === "x"}
                 onClick={() => setCursorMode("x")}
                 title="A click in a plot places a vertical cursor: a position in time, the same in every plot"
               >
@@ -2210,6 +2229,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
               </button>
               <button
                 className={`btn-seg ${cursorMode === "y" ? "active" : ""}`}
+                aria-pressed={cursorMode === "y"}
                 onClick={() => setCursorMode("y")}
                 title="A click in a plot places a horizontal cursor: a value on that plot's own axis"
               >
