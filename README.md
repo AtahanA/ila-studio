@@ -231,7 +231,7 @@ keys are described in [docs/profile-schema.md](docs/profile-schema.md).
 ## Command line
 
 `ila_capture.py` works without the GUI. Its commands are `check`, `info`, `capture`, `watch`, `hook`,
-`convert`, `stats` and `summary`; options such as `--profile` stand before the command.
+`convert`, `stats` and `summary`; options such as `--profile` stand before or after the command.
 
 ```powershell
 python ila_capture.py --help

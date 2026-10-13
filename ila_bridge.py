@@ -277,6 +277,9 @@ KEPT = None         # {"viv": the Repl, "extra": the further Repls, "key": what 
 # of them writes its file while the next one is already capturing. The first one is the session - it set the
 # cable up and puts it back; the further ones ("extra") come and go with what a job asks for.
 MAX_ENGINES = 3
+# A run "until stopped" (--count 0) ends by itself after this many windows - a day or two at one to two seconds
+# a window - so that a run nobody is watching does not go on filling one folder for ever. Its answer says so.
+MAX_WINDOWS = 100000
 # Capture failures that say something about the request or the signal, not about the session: a fresh session
 # would fail the same way.
 ASKED_WRONG = re.compile(r"not triggered within|stopped by user|not found - see ila_probes|compare_value|"
@@ -620,7 +623,9 @@ def make_session(a, ephemeral):
     except json.JSONDecodeError as e:
         raise RuntimeError(f"{profile}: invalid JSON at line {e.lineno}, column {e.colno}: {e.msg}")
     hw, cap = prof["hardware"], prof["capture"]
-    hw["url"] = normalise_url(hw.get("url") or "")
+    # The driver's check of an address, the one the command line goes by as well. The session would apply it by
+    # itself; it is asked here because the log line and the reachability check below come before the session.
+    hw["url"] = ic.normalise_url(hw.get("url"))
     if not hw.get("ltx"):
         raise RuntimeError("no probe file (.ltx) given - it is what names the probes of the bitstream on the board")
     if not os.path.isabs(hw["ltx"]):
@@ -665,30 +670,6 @@ def make_session(a, ephemeral):
     if a.stop_file:                                        # the GUI's stop signal instead of the session's own
         s.stop_file, s.own_stop_file = a.stop_file, False
     return s, prof
-
-
-# What a hw_server address may look like: a host name or an IPv4 address, or an IPv6 address in brackets, each
-# with a port if one is given - or an IPv6 address without brackets, which cannot carry a port. The address goes
-# into a Tcl command and onto the command line of other programs, so text that is none of these is not passed
-# on: "a[exec calc.exe]::" is not a host.
-HOST_PORT_RE = re.compile(r"(?:[\w.-]+|\[[0-9A-Fa-f:.]+(?:%[\w.-]+)?\])(?::[0-9]{1,5})?")
-BARE_IPV6_RE = re.compile(r"[0-9A-Fa-f:.]+(?:%[\w.-]+)?")
-
-
-def normalise_url(url):
-    """hw_server address as "<host>:<port>": a "TCP:" prefix (the way Vivado prints it) is dropped and the default
-    port added, so that Vivado and the reachability check below are given the same thing. What is not an address
-    (see above) is refused."""
-    url = re.sub(r"^tcp:", "", url.strip(), flags=re.I).strip()
-    if not url:
-        raise RuntimeError("no hw_server address given (e.g. localhost:3121)")
-    bare_ipv6 = url.count(":") > 1 and not url.startswith("[")
-    if not (BARE_IPV6_RE if bare_ipv6 else HOST_PORT_RE).fullmatch(url):
-        raise RuntimeError(f"{url!r} is not a hw_server address: give a host name or an IP address, with the port "
-                           f"if it is not 3121 (e.g. localhost:3121, 192.0.2.10:3121 or [::1]:3121)")
-    if not bare_ipv6 and not re.search(r":\d+$", url):
-        url += ":3121"
-    return url
 
 
 def check_reachable(url):
@@ -813,8 +794,9 @@ def cmd_capture(a):
         result["info"] = info
         single = a.count == 1
         until_stopped = a.count <= 0
-        limit = a.count if a.count > 0 else 100000
+        limit = a.count if a.count > 0 else MAX_WINDOWS
         misses, last_error, ended_by, n = 0, "", "", 0
+        at_limit = ""                                      # an until-stopped run that came to MAX_WINDOWS: no failure
         reconnected = False
         # In a run of several windows, what is left to do once Vivado has written a window's file - putting the
         # CSV into the formats asked for, statistics, the row in index.csv, telling the GUI - is done by a second
@@ -947,6 +929,9 @@ def cmd_capture(a):
                     ended_by = last_error = "less than 1 GB free on the capture drive"
                     s.log(f"stopping: {ended_by}")
                     break
+                if until_stopped and n >= limit and not stopped():
+                    at_limit = f"the limit of {limit} windows of one run was reached"
+                    s.log(f"stopping: {at_limit}")         # the loop ends here by itself; the log says why
         finally:
             # every window is written, finished and announced before the job answers: the answer is the last
             # line of a job, and the session folder's log is closed with it
@@ -964,6 +949,7 @@ def cmd_capture(a):
             result["message"] = (f"Captured {result['captures']} window(s) into {s.out}" if not single
                                  else f"Capture saved: {result['csvPath']}") \
                 + (f" - the run ended early: {ended_by}" if ended_by and not single else "") \
+                + (f" - the run ended by itself: {at_limit}; start it again to go on" if at_limit else "") \
                 + (f"; {tally['lost']} more window(s) were uploaded but could not be written: {tally['error']}"
                    if tally["lost"] and tally["error"] != ended_by else "") \
                 + (f"; {dropped} Vivado engine(s) dropped out on the way, the run went on with "

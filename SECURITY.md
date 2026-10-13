@@ -49,8 +49,7 @@ that is a vulnerability and in scope:
 Known gaps:
 
 - `capture.format`, `capture.position` and `capture.timeout_min` are not checked when they come from a profile.
-- On the command line of `ila_capture.py` the hw_server address is not checked the way the GUI checks it, and
-  the hook mode hands it and `hardware.core_filter` to xsct through `cmd /c` as they are written.
+- The hook mode hands `hardware.core_filter` to xsct through `cmd /c` as it is written.
 - A capture or probe file is read into memory whole, without a size limit.
 
 ### Network

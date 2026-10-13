@@ -33,8 +33,9 @@ script that Vivado runs (`tools.tcl_script`). Whoever uses a profile runs what i
 that you would also run as a script**, and read a profile that somebody else wrote before you select it.
 
 The other values of a profile are data. The address, the paths, the filters and the trigger are passed to
-Vivado as text, and an unknown `radix` or `capture_mode` is refused. `capture.format`, `capture.position` and
-`capture.timeout_min` are not checked when they come from a profile. See [SECURITY.md](../SECURITY.md).
+Vivado as text; text that is no hw_server address, and an unknown `radix` or `capture_mode`, are refused.
+`capture.format`, `capture.position` and `capture.timeout_min` are not checked when they come from a profile
+(`watch` alone refuses a `format` it does not know). See [SECURITY.md](../SECURITY.md).
 
 ## How a profile is read
 
@@ -86,9 +87,10 @@ profile for the `hook` command states `xsct`, `nm` and `objdump` of its own inst
 | `ila_cell` | text | none | The ILA core by its cell name, as the probe file names it. It wins over `ila_index`. The GUI sends the cell name of the selected core with its jobs and does not store this key in a saved profile (the name of the core is kept in `gui.core`). |
 | `core_filter` | text | `""` | The xsct target that runs the firmware, for the `hook` command. Empty means core 0 of a Zynq-7000: `name =~ "*Cortex-A9*#0*"`. |
 
-Forms of `url` that the GUI accepts: a host name or an IPv4 address, with or without `:port`; an IPv6 address in
-brackets, with or without `:port`; a bare IPv6 address; each may begin with `TCP:`. Port 3121 is added when
-none is given. Anything else is refused before Vivado is started.
+Forms of `url` that are accepted, by the GUI and by the command line alike (also for `--server`): a host name
+or an IPv4 address, with or without `:port`; an IPv6 address in brackets, with or without `:port`; a bare IPv6
+address; each may begin with `TCP:`. Port 3121 is added when none is given. Anything else is refused before
+Vivado or xsct is started, and `check` reports it.
 
 ## `capture`
 
@@ -97,7 +99,7 @@ none is given. Anything else is refused before Vivado is started.
 | `trigger` | text | `"now"` | `"now"` (capture at once) or `"<probe> <compare-value>"`, e.g. `"frame_start eq1'bR"`. See below. |
 | `position` | integer | `1000` | Samples kept before the trigger. |
 | `timeout_min` | number | `1` | Minutes to wait for the trigger. |
-| `format` | text | `"both"` | What is written for each capture: `both`, `ila` or `csv`. The `watch` command writes `csv` unless `--format` says otherwise. |
+| `format` | text | `"both"` | What is written for each capture: `both`, `ila` or `csv`. The `watch` command uses the key only when the profile states it, and writes `csv` when it does not: writing the `.ila` as well would slow every recording down. `--format` wins in every command. |
 | `sample_period_ns` | number | `0` | The period of the ILA clock in ns. `0` means unknown: times are then given in samples. |
 | `radix` | text | `"UNSIGNED"` | How Vivado is asked to write every multi-bit probe: `UNSIGNED`, `SIGNED` or `HEX` (any letter case; sent to Vivado in capitals). Anything else is refused. Not used by captures from the GUI. |
 | `probe_format` | object | `{}` | How single probes are written into the CSV where that differs from `radix`: `{"adc_data": "signed", "top/u1/status": "hex"}`. The key is a net name with or without its hierarchy; the value is `unsigned`, `signed` or `hex`. |
@@ -112,9 +114,9 @@ padded with zeros on the left. Braces in a trigger must pair up.
 
 **Formats.** `unsigned` is the plain number (16354). `signed` is the two's complement of the probe width (-30
 for a 14-bit bus), written by Vivado itself. `hex` is written by this tool after the capture, with `0x` and
-every digit of the width (`0x3FE2`). The `.ila` archive is never rewritten. `radix` `HEX` is of little use
-with the `capture` and `hook` commands: they rewrite the hex columns that Vivado wrote to unsigned decimal in
-the CSV. Use `probe_format` for hex columns.
+every digit of the width (`0x3FE2`). The `.ila` archive is never rewritten. `radix` `HEX` is of little use:
+`capture`, `hook` and `watch` rewrite the hex columns that Vivado wrote to unsigned decimal in the CSV. Use
+`probe_format` for hex columns.
 
 ## `hook`
 
@@ -246,8 +248,10 @@ development build, `distribute\` in a portable folder.
 | `tools.tcl_script`, `--tcl` | as written, else in the program folder | `--tcl`: as written, else in the program folder |
 | `tools.vivado`, `xsct`, `nm`, `objdump` | as written (Vivado is searched for if it is not there) | the same |
 
-`check` reports a relative `hardware.ltx` or `capture.out` as a problem, for the reason in the table. A profile
-that is only used from the GUI may use relative paths; one that is also used on the command line should not.
+`check` reports a relative `hardware.ltx` as a problem, for the reason in the table. A relative `capture.out`
+is none: `check` notes the folder it stands for when the command is started in the current directory. A
+profile that is only used from the GUI may name its probe file by a relative path; one that is also used on
+the command line should not.
 
 ## Checking a profile
 
@@ -256,12 +260,13 @@ python ila_capture.py --profile profiles\example-basic.json check
 python ila_capture.py --profile profiles\example-hook-uart.json check --hook
 ```
 
-`--profile` stands before the command. `check` needs no hardware. It looks for Vivado the way a capture does,
-for the probe file, for a trigger that can be written, for a known `radix` and `capture_mode`, and for a hook
-section that fits together (required keys, a template that only uses known fields). `--hook` also requires the
-hook keys and looks for `xsct`, `nm` and `objdump`. `--elf <file>` reads the hook symbols from an ELF file and
-compares the size of the variable with `hook.fields`. `check` prints `note:` and `PROBLEM:` lines and ends with
-`OK` (exit code 0) or the number of problems (exit code 1).
+`--profile` may stand before or after the command. `check` needs no hardware. It looks for Vivado the way a
+capture does, for the probe file, for a hw_server address that can be used, for a trigger that can be written,
+for a known `radix` and `capture_mode`, and for a hook section that fits together (required keys, a template
+that only uses known fields). `--hook` also requires the hook keys and looks for `xsct`, `nm` and `objdump`.
+`--elf <file>` reads the hook symbols from an ELF file and compares the size of the variable with
+`hook.fields`. `check` prints `note:` and `PROBLEM:` lines and ends with `OK` (exit code 0) or the number of
+problems (exit code 1).
 
 On a PC without Vivado and without the probe file, the shipped `example-basic.json` gives two problems: Vivado
 not found, and `hardware.ltx not found`.

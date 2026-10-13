@@ -4,6 +4,8 @@
 """Hook mode without a CPU: the helpers that find the hook in an ELF file and recognise a halt at it, and whole
 runs of the "hook" command against the recorder that stands in for Vivado and xsct."""
 import json
+import os
+import sys
 import types
 
 import pytest
@@ -41,6 +43,20 @@ def test_call_sites_are_the_lines_that_call_the_hook(monkeypatch):
     tools_print(monkeypatch, OBJDUMP)
     # not the call of a function that only starts with the name, and not the plain branch
     assert ic.elf_callsites(ic.load_profile(None), "app.elf", "capture_hook") == {0x100a4c}
+
+
+def test_tool_that_fails_ends_the_run_with_what_it_said(tmp_path):
+    # as nm does for a file that is no image. Python stands in for both tools: it takes "-S" and "-d" as options
+    # of its own and runs the "image", which ends as such a tool does - a line for stderr, exit code 1
+    image = tmp_path / "app.elf"
+    image.write_text("import sys\nsys.exit('app.elf: file format not recognized')\n")
+    prof = ic.load_profile(None)
+    prof["tools"].update(nm=sys.executable, objdump=sys.executable)
+    with pytest.raises(RuntimeError) as failed:
+        ic.elf_symbol(prof, str(image), "capture_hook")
+    assert str(failed.value) == "tools.nm of the profile ended with exit code 1: app.elf: file format not recognized"
+    with pytest.raises(RuntimeError, match=r"^tools\.objdump of the profile ended with exit code 1: app\.elf: "):
+        ic.elf_callsites(prof, str(image), "capture_hook")
 
 
 def test_halt_inside_the_hook_or_on_a_line_that_calls_it():
@@ -100,3 +116,35 @@ def test_halt_at_the_hook_is_captured_and_the_core_resumed(vivado, hook, tmp_pat
 def test_position_zero_reaches_the_arm_before_the_first_halt(vivado, hook):
     hook("arm_and_collect_next", "--count", "0", "--position", "0")
     assert "ila_arm {frame_start eq1'bR} 0 UNSIGNED" in vivado
+
+
+def test_run_that_ends_in_an_error_exits_with_1(vivado, hook, tmp_path):
+    # the error is logged by the command itself, which still looks after the core and closes in order
+    vivado.failing["core_state"] = "no targets found"
+    assert hook("capture_now", "--count", "1") == 1
+    (session,) = (tmp_path / "out").iterdir()
+    log = (session / "session.log").read_text()
+    assert "ERROR: xsct: 'core_state' failed: no targets found" in log
+    assert "could not check/resume the core" in log
+
+
+def test_run_that_comes_to_its_end_exits_with_0(vivado, hook):
+    assert hook("capture_now", "--count", "0") == 0
+
+
+@pytest.mark.parametrize("server, address", [
+    ([], "tcp:127.0.0.1:3121"),                          # the address of the built-in defaults
+    (["--server", "192.0.2.10"], "tcp:192.0.2.10:3121"),
+    (["--server", "labpc:3122"], "tcp:labpc:3122"),
+    (["--server", "TCP:192.0.2.10"], "tcp:192.0.2.10:3121"),         # not "tcp:TCP:192.0.2.10"
+])
+def test_xsct_is_given_the_address_in_its_one_form(vivado, hook, server, address):
+    hook("capture_now", "--count", "0", *server)
+    assert vivado.started["xsct"][-2:] == [os.path.join(ic.HERE, "xsct_repl.tcl"), address]
+
+
+def test_xsct_is_not_started_with_text_that_is_no_address(vivado, hook):
+    # the address stands on a cmd /c line there: cmd would run what follows the "&" as a command of its own
+    message = hook("capture_now", "--count", "1", "--server", "a&echo.SECOND&rem")
+    assert message.startswith("'a&echo.SECOND&rem' is not a hw_server address")
+    assert vivado.started == {}

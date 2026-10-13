@@ -38,6 +38,15 @@ def test_hook_magic_may_be_written_in_hex(write):
     assert prof["hook"]["magic"] == 4660
 
 
+def test_what_the_file_itself_says_can_be_told_from_the_defaults(write):
+    prof = ic.load_profile(write("p.json", json.dumps({"capture": {"position": 300}, "stats": "none"})))
+    assert prof["capture"]["format"] == "both"               # the default ...
+    assert ic.stated(prof, "capture", "format") is None      # ... which this file never asked for
+    assert ic.stated(prof, "capture", "position") == 300
+    assert ic.stated(prof, "stats", "mode") is None          # a section that is no object states no keys
+    assert ic.stated(ic.load_profile(None), "capture", "position") is None
+
+
 # ---------------------------------------------------------------- the command line over the profile
 def overrides(**given):
     """What the command line hands to apply_overrides when only these hardware options were given."""
@@ -46,9 +55,28 @@ def overrides(**given):
     return types.SimpleNamespace(**args)
 
 
-@pytest.mark.parametrize("server, url", [("192.0.2.10", "192.0.2.10:3121"), ("labpc:3122", "labpc:3122")])
+@pytest.mark.parametrize("server, url", [("192.0.2.10", "192.0.2.10:3121"), ("labpc:3122", "labpc:3122"),
+                                         ("TCP:192.0.2.10", "192.0.2.10:3121"), ("[::1]", "[::1]:3121")])
 def test_server_gets_the_default_port(server, url):
-    assert ic.apply_overrides(ic.load_profile(None), overrides(server=server))["hardware"]["url"] == url
+    # the option is taken as it was typed; the session it is used for brings the address into its one form
+    prof = ic.apply_overrides(ic.load_profile(None), overrides(server=server))
+    assert prof["hardware"]["url"] == server
+    assert ic.Session(None, prof, ephemeral=True).prof["hardware"]["url"] == url
+
+
+@pytest.mark.parametrize("server, said", [("", "no hw_server address given"), ("   ", "no hw_server address given"),
+                                          ("a&echo.SECOND&rem", "'a&echo.SECOND&rem' is not a hw_server address")])
+def test_server_that_is_no_address_gets_no_session(server, said):
+    # a blank one does not fall back to the address of the profile without a word
+    prof = ic.apply_overrides(ic.load_profile(None), overrides(server=server))
+    with pytest.raises(RuntimeError, match=said):
+        ic.Session(None, prof, ephemeral=True)
+
+
+def test_address_of_a_profile_is_checked_like_one_that_was_typed(write):
+    prof = ic.load_profile(write("p.json", json.dumps({"hardware": {"url": "http://192.0.2.10"}})))
+    with pytest.raises(RuntimeError, match="'http://192.0.2.10' is not a hw_server address"):
+        ic.Session(None, ic.apply_overrides(prof, overrides()), ephemeral=True)
 
 
 def test_hardware_options_win_over_the_profile():
@@ -127,7 +155,7 @@ def test_shipped_example_profile_can_be_used(path):
     """It loads, and holds nothing that a capture refuses before it starts: address, trigger, radix, capture
     mode, probe formats."""
     prof = ic.load_profile(path)
-    ib.normalise_url(prof["hardware"]["url"])
+    ic.normalise_url(prof["hardware"]["url"])
     ic.tcl_trigger(prof["capture"]["trigger"])
     ic.capture_words(prof["capture"])
     ic.probe_format_map(prof["capture"]["probe_format"])

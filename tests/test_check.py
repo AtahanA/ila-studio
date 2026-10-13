@@ -2,6 +2,7 @@
 # Copyright (C) 2026 Atahan Aggunlu
 
 """The "check" command: a profile is judged offline, and by the rules a real run goes by."""
+import os
 import types
 
 import pytest
@@ -62,13 +63,45 @@ def test_profile_without_a_probe_file_fails(prof, capsys):
     ({"trigger": "a}b eq1'b1"}, "its braces do not pair up"),
     ({"radix": "OCTAL"}, "capture.radix is 'OCTAL': it must be one of UNSIGNED, SIGNED, HEX"),
     ({"capture_mode": "x"}, "capture.capture_mode is 'x': it must be one of ALWAYS, BASIC"),
-    ({"out": "captures"}, "capture.out is relative (captures)"),
 ])
 def test_capture_settings_that_cannot_work_are_problems(prof, capsys, capture, said):
     prof["capture"].update(capture)
     code, out = check(prof, capsys)
     assert code == 1
     assert said in [line for line in out.splitlines() if "PROBLEM: " in line][0]
+
+
+def test_relative_capture_folder_is_noted_with_where_it_is(prof, capsys, tmp_path, monkeypatch):
+    # the folder is well defined - against the directory the command is started in - so the profile passes
+    monkeypatch.chdir(tmp_path)
+    prof["capture"]["out"] = "captures"
+    code, out = check(prof, capsys)
+    assert code == 0 and "PROBLEM" not in out
+    assert "note:    capture.out is relative (captures): started in this directory the captures go to %s" % (
+        os.path.join(os.getcwd(), "captures")) in out
+
+
+def test_relative_probe_file_stays_a_problem(prof, capsys, tmp_path, monkeypatch):
+    # check finds it from the directory it is started in; Vivado is started in the program folder
+    monkeypatch.chdir(tmp_path)
+    prof["hardware"]["ltx"] = "top.ltx"
+    code, out = check(prof, capsys)
+    assert code == 1 and "PROBLEM: hardware.ltx is relative (top.ltx)" in out
+
+
+@pytest.mark.parametrize("url, said", [
+    ("http://192.0.2.10", "hardware.url: 'http://192.0.2.10' is not a hw_server address"),
+    ("", "hardware.url: no hw_server address given"),
+])
+def test_address_no_run_would_take_is_a_problem(prof, capsys, url, said):
+    prof["hardware"]["url"] = url
+    code, out = check(prof, capsys)
+    assert code == 1 and "PROBLEM: " + said in out
+
+
+def test_address_with_a_prefix_or_without_a_port_is_none(prof, capsys):
+    prof["hardware"]["url"] = "TCP:192.0.2.10"
+    assert check(prof, capsys)[0] == 0
 
 
 def test_jtag_clock_above_what_worked_is_noted(prof, capsys):

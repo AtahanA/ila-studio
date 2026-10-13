@@ -39,12 +39,19 @@ def tcl():
 
 def test_repl_script_is_sourced_and_has_what_the_driver_asks_for(tcl):
     repl = tcl(ic.resolve_tcl(None))                     # "@@READY" came: the whole file was read without an error
-    assert repl.cmd(ic.SCRIPT_CHECK) == "version=3;missing="
+    # its version is the one the driver expects, and it lacks nothing: no note about an older script
+    assert repl.cmd(ic.SCRIPT_CHECK) == "version=%d;missing=" % ic.SCRIPT_VERSION
     defined = repl.cmd("info procs").split()
     assert [name for name in CALLED if name not in defined] == []
     # the body of every proc is whole: a brace in a comment has not moved the end of one
     assert repl.cmd("set bad {}; foreach p [info procs ila_*] { if {![info complete [info body $p]]} "
                     "{ lappend bad $p } }; set bad") == ""
+
+
+def test_script_that_states_no_version_answers_zero(tcl):
+    repl = tcl(ic.resolve_tcl(None))
+    repl.cmd("unset ::ILA_REPL_VERSION")                 # as in a script of one's own
+    assert repl.cmd(ic.SCRIPT_CHECK) == "version=0;missing="         # which the driver takes for "not stated"
 
 
 def test_capture_commands_reach_their_procs_with_the_values_meant(tcl):

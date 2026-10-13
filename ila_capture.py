@@ -20,9 +20,12 @@ Commands
                             read the info struct, capture, resume. Repeats until --count/--minutes.
   watch                     record continuously: arm, collect, re-arm, write, forever. The CPU is never
                             touched. Reports how much of the timeline was actually covered.
-  convert PATH...           make ILA CSVs decimal; for a folder, also extract a CSV from every .ila
+  convert PATH...           make ILA CSVs (.csv, .csv.gz) decimal and extract a CSV from every .ila that has
+                            none; a path is a file or a folder of them
   stats FILE...             statistics of existing .csv/.ila files (no hardware)
   summary DIR               one row per capture in a folder: edges, event counts, timing (no hardware)
+
+The options of the whole tool (--profile, --ltx, --server ...) may stand before or after the command.
 
 All CSVs this tool writes are decimal: multi-bit probes as unsigned decimal, 1-bit probes 0/1.
 
@@ -99,8 +102,11 @@ DEFAULT_PROFILE = {
 
 
 def load_profile(path):
-    """Profile JSON merged over DEFAULT_PROFILE (section by section), so a profile only states what differs."""
+    """Profile JSON merged over DEFAULT_PROFILE (section by section), so a profile only states what differs.
+    What the file itself says is kept next to the result, under "_stated": where a built-in default must not
+    count as something the user asked for, the two can be told apart (see stated)."""
     prof = {k: dict(v) if isinstance(v, dict) else v for k, v in DEFAULT_PROFILE.items()}
+    user = {}
     if path:
         with open(path, encoding="utf-8") as f:
             user = json.load(f)
@@ -111,7 +117,16 @@ def load_profile(path):
                 prof[k] = v
     if isinstance(prof.get("hook", {}).get("magic"), str):
         prof["hook"]["magic"] = int(prof["hook"]["magic"], 0)
+    prof["_stated"] = user
     return prof
+
+
+def stated(prof, section, key):
+    """What the profile file itself says for a key of a section; None when it does not say, or there is no
+    file. prof[section][key] cannot tell: there the built-in default stands in."""
+    part = prof.get("_stated")
+    part = part.get(section) if isinstance(part, dict) else None
+    return part.get(key) if isinstance(part, dict) else None
 
 
 def apply_overrides(prof, args):
@@ -119,8 +134,9 @@ def apply_overrides(prof, args):
     hw = prof["hardware"]
     if args.ltx:
         hw["ltx"] = os.path.abspath(args.ltx)
-    if args.server:
-        hw["url"] = args.server if ":" in args.server else args.server + ":3121"
+    if args.server is not None:
+        # as it was typed, a blank one too: normalise_url is what judges an address and gives it its port
+        hw["url"] = args.server
     if args.device:
         hw["device_filter"] = args.device
     if args.ila_index is not None:
@@ -130,6 +146,31 @@ def apply_overrides(prof, args):
     if args.jtag_hz is not None:
         hw["jtag_frequency_hz"] = args.jtag_hz
     return prof
+
+
+# What a hw_server address may look like: a host name or an IPv4 address, or an IPv6 address in brackets, each
+# with a port if one is given - or an IPv6 address without brackets, which cannot carry a port. The address goes
+# into a Tcl command and onto the command line of other programs, so text that is none of these is not passed
+# on: "a[exec calc.exe]::" is not a host.
+HOST_PORT_RE = re.compile(r"(?:[\w.-]+|\[[0-9A-Fa-f:.]+(?:%[\w.-]+)?\])(?::[0-9]{1,5})?")
+BARE_IPV6_RE = re.compile(r"[0-9A-Fa-f:.]+(?:%[\w.-]+)?")
+
+
+def normalise_url(url):
+    """hw_server address as "<host>:<port>": a "TCP:" prefix (the way Vivado prints it) is dropped and the default
+    port added, so that Vivado, xsct and the reachability check of the GUI bridge are given the same thing. What
+    is not an address (see above) is refused. The one check for the command line and the GUI: every Session
+    applies it to the address it is made with."""
+    url = re.sub(r"^tcp:", "", str(url or "").strip(), flags=re.I).strip()
+    if not url:
+        raise RuntimeError("no hw_server address given (e.g. localhost:3121)")
+    bare_ipv6 = url.count(":") > 1 and not url.startswith("[")
+    if not (BARE_IPV6_RE if bare_ipv6 else HOST_PORT_RE).fullmatch(url):
+        raise RuntimeError(f"{url!r} is not a hw_server address: give a host name or an IP address, with the port "
+                           f"if it is not 3121 (e.g. localhost:3121, 192.0.2.10:3121 or [::1]:3121)")
+    if not bare_ipv6 and not re.search(r":\d+$", url):
+        url += ":3121"
+    return url
 
 
 # Without this a parent that has no console (a GUI) gets a console window per child, and closing that window
@@ -152,6 +193,10 @@ def kill_tree(p):
 # that asks any script for it (Session.check_script). An application updated without its scripts folder runs
 # this driver against an older script; most of it still works, which is why it has to be said.
 SCRIPT_NEEDS = ("ila_recheck", "ila_probe_radix", "ila_capture_keep", "ila_write_last", "ila_select", "ila_where")
+# The ::ILA_REPL_VERSION of the script this driver was written against. A proc that is there but behaves as it
+# did in an earlier release does not show in the list above; a lower number does. The two are counted up
+# together. A script that states no number (one's own) answers 0: unknown, which is not the same as older.
+SCRIPT_VERSION = 3
 SCRIPT_CHECK = ("set ::ILA_CHECK {}; foreach p {" + " ".join(SCRIPT_NEEDS) + "} "
                 "{ if {[llength [info procs $p]] == 0} { lappend ::ILA_CHECK $p } }; "
                 "if {![info exists ::JTAG_LEAVE]} { lappend ::ILA_CHECK ::JTAG_LEAVE }; "
@@ -318,6 +363,8 @@ def tcl_trigger(trig):
 # beyond these three is refused as well (binary, octal): the CSV readers below take a column for hex or decimal.
 RADIXES = ("UNSIGNED", "SIGNED", "HEX")
 CAPTURE_MODES = ("ALWAYS", "BASIC")
+# What is written for a capture: the choices of --format, and what "watch" accepts as the format of a profile.
+FILE_FORMATS = ("both", "ila", "csv")
 
 
 def capture_words(cap):
@@ -571,7 +618,14 @@ def ila_text_formatted(text, formats):
     wanted = format_columns(hdr, formats)
     changed = {}
     for i, w in bus_columns(hdr).items():
-        fmt = wanted.get(i) or ("unsigned" if written.get(i) == "hex" else None)
+        fmt = wanted.get(i)
+        if fmt is None and written.get(i) == "hex":
+            # Hex that nobody asked about. Without "0x" it is Vivado's own export and becomes unsigned decimal.
+            # With "0x" it is a format somebody chose in an earlier pass over this file, which a second pass
+            # with other formats must not undo. One value tells: column_radixes refuses a column that mixes them.
+            first = next((r[i].strip() for r in data if i < len(r) and r[i].strip()), "")
+            if first[:2] not in ("0x", "0X"):
+                fmt = "unsigned"
         if fmt is None:
             continue
         base = 16 if written.get(i) == "hex" else 10
@@ -745,6 +799,9 @@ class Session:
         """ephemeral: connect and report without creating a session folder (used by 'info')."""
         self.args, self.prof = args, prof
         self.out = self.logf = self.index = None
+        # The hw_server address, from the command line or a profile: in its one form, or refused. Here, so that
+        # no caller can leave it out - it goes into the ila_open command and, for xsct, onto a command line.
+        prof["hardware"]["url"] = normalise_url(prof["hardware"].get("url"))
         if not ephemeral:
             # what the capture commands would refuse (tcl_trigger, capture_words) is refused now, before a
             # session folder is made and Vivado started for it
@@ -797,9 +854,12 @@ class Session:
         return info
 
     def check_script(self, viv, path):
-        """What the REPL script this Vivado has sourced lacks of the things this driver asks for (viv.lacks). What
-        is missing is worked around - but said, once, and kept for the answer of the job (self.script_note): a
-        program updated without its scripts folder otherwise shows only as notes nobody can place."""
+        """What the REPL script this Vivado has sourced lacks of the things this driver asks for (viv.lacks), and
+        whether its version is the one this driver was written against. What is missing is worked around - but
+        said, once, and kept for the answer of the job (self.script_note): a program updated without its
+        scripts folder otherwise shows only as notes nobody can place. The log names script and version either
+        way: which script a Vivado ran is the first question about a script of one's own or a folder that was
+        updated by half."""
         try:
             answer = viv.cmd(SCRIPT_CHECK, timeout=60)
         except RuntimeError:
@@ -808,13 +868,19 @@ class Session:
             answer = ""
         got = dict(p.split("=", 1) for p in answer.split(";") if "=" in p)
         viv.lacks = set(filter(None, got.get("missing", "").split(",")))
+        version = got.get("version", "").strip()
+        version = int(version) if version.isdigit() else 0
+        self.log(f"Tcl script {path}, version {version or 'not stated'}", quiet=True)
+        older = 0 < version < SCRIPT_VERSION     # 0: a script that does not say - unknown, not older
         self.script_note = ""
-        if viv.lacks:
+        if viv.lacks or older:
             around = [text for item, text in (("ila_probe_radix", "signed formats are converted after each capture"),
                                               ("ila_capture_keep", "only one Vivado engine is used"))
                       if item in viv.lacks]
-            self.script_note = (f"The Tcl script {path} is older than this program (it has no "
-                                f"{', '.join(sorted(viv.lacks))}): " + ("; ".join(around) + ". " if around else "")
+            what = ([f"it has no {', '.join(sorted(viv.lacks))}"] if viv.lacks else []) + (
+                [f"it is version {version}, this program expects {SCRIPT_VERSION}"] if older else [])
+            self.script_note = (f"The Tcl script {path} is older than this program ({'; '.join(what)}): "
+                                + ("; ".join(around) + ". " if around else "")
                                 + "Update the scripts folder together with the program, or clear the Tcl script "
                                   "field if it names a copy from an earlier release.")
             self.log("WARNING " + self.script_note)
@@ -923,8 +989,11 @@ class Session:
         still connecting. attach_extra_vivado connects it."""
         t = self.prof["tools"]
         tcl_script = resolve_tcl(getattr(self.args, "tcl", None))
-        return Repl(launch(resolve_vivado(t["vivado"]), "-mode", "tcl", "-nolog", "-nojournal", "-notrace", "-source",
-                           tcl_script), f"vivado{tag}", self.log)
+        r = Repl(launch(resolve_vivado(t["vivado"]), "-mode", "tcl", "-nolog", "-nojournal", "-notrace", "-source",
+                        tcl_script), f"vivado{tag}", self.log)
+        # the log names the script of every Vivado; its version is asked of the first one only (check_script)
+        self.log(f"[{r.name}] Tcl script {tcl_script}", quiet=True)
+        return r
 
     def attach_extra_vivado(self, r):
         """Connect a started client to the ILA the first one has open; it joins self.extra. Only when the first
@@ -1102,10 +1171,25 @@ def hand_over_cable(first, others):
 
 
 # ---------------------------------------------------------------- ELF helpers (hook mode)
+def elf_tool(prof, tool, *args):
+    """What tools.nm or tools.objdump of the profile prints for these arguments. Neither is searched for: they
+    are run as the profile names them. RuntimeError, the sentence a failed run ends with, for one that cannot be
+    started and for one that ends with an error - an image that is not there, or a file that is none."""
+    exe = prof["tools"][tool]
+    try:
+        return subprocess.run([exe, *args], capture_output=True, text=True, check=True).stdout
+    except OSError as e:
+        raise RuntimeError(f"tools.{tool} of the profile cannot be started ({exe}: {e.strerror or e})")
+    except subprocess.CalledProcessError as e:
+        said = (e.stderr or "").strip().splitlines()
+        raise RuntimeError(f"tools.{tool} of the profile ended with exit code {e.returncode}"
+                           + (f": {said[-1]}" if said else f" ({exe})"))
+
+
 def elf_symbol(prof, elf, name):
     """(address, size) of a symbol. The size matters: it tells the caller how many words the info struct has,
     so an older image with fewer fields still works."""
-    out = subprocess.run([prof["tools"]["nm"], "-S", elf], capture_output=True, text=True, check=True).stdout
+    out = elf_tool(prof, "nm", "-S", elf)
     for line in out.splitlines():
         parts = line.split()
         if len(parts) == 4 and parts[3] == name:
@@ -1118,7 +1202,7 @@ def elf_callsites(prof, elf, name):
     halts there, after the info struct has been written, so such a halt is as good as a halt inside the hook -
     and an IDE line breakpoint is what people actually set. The mnemonics come from the profile because the
     architecture decides them (bl on ARM, brlid on MicroBlaze, jal on RISC-V)."""
-    out = subprocess.run([prof["tools"]["objdump"], "-d", elf], capture_output=True, text=True, check=True).stdout
+    out = elf_tool(prof, "objdump", "-d", elf)
     mnem = "|".join(re.escape(m) for m in prof["hook"].get("call_mnemonics") or ["bl"])
     pat = re.compile(r"^\s*([0-9a-f]+):.*?\b(?:" + mnem + r")\b[^<]*<" + re.escape(name) + r">\s*$", re.M)
     return {int(m.group(1), 16) for m in pat.finditer(out)}
@@ -1166,10 +1250,17 @@ def cmd_check(args, prof):
                          if "HUB_CLK_INPUT_FREQ_HZ" in txt else f"hardware.ltx: {txt.count('<probe ')} probe entries")
         except Exception as e:
             notes.append(f"hardware.ltx could not be parsed ({e}) - it is still passed to Vivado as is")
-    for key, val in (("hardware.ltx", hw.get("ltx")), ("capture.out", cap.get("out"))):
-        if val and not os.path.isabs(val):
-            problems.append(f"{key} is relative ({val}); paths are resolved against the current directory, "
-                            f"so use an absolute path")
+    try:
+        normalise_url(hw.get("url"))             # what every hardware command would be refused for
+    except RuntimeError as e:
+        problems.append(f"hardware.url: {e}")
+    if hw.get("ltx") and not os.path.isabs(hw["ltx"]):
+        problems.append(f"hardware.ltx is relative ({hw['ltx']}); paths are resolved against the current directory, "
+                        f"so use an absolute path")
+    if cap.get("out") and not os.path.isabs(cap["out"]):
+        # no problem: the folder is defined, only not by the profile alone - so it is said where that is
+        notes.append(f"capture.out is relative ({cap['out']}): started in this directory the captures go to "
+                     f"{os.path.abspath(cap['out'])} (the GUI takes it against the program folder)")
     if cap.get("trigger", "now") != "now" and len(str(cap["trigger"]).split()) != 2:
         problems.append(f"capture.trigger must be \"now\" or \"<probe> <compare-value>\", got {cap['trigger']!r}")
     for refused in (lambda: tcl_trigger(cap.get("trigger", "now")), lambda: capture_words(cap)):
@@ -1281,6 +1372,7 @@ def cmd_hook(args, prof):
     s.log(f"hook {h['symbol']} @0x{hook:08x}+{hook_size}, call sites {[hex(c) for c in sorted(calls)]}, "
           f"{h['info_symbol']} @0x{info:08x} ({n_words} words), mode {h.get('mode')}, output {s.out}")
     done, last_seq, run, pending = 0, None, 1, None
+    failed = False                           # an error ended the run: the exit code has to say so
     t_end = time.time() + args.minutes * 60
     resume_at = {int(x, 0) for x in args.resume_at}
     try:
@@ -1355,6 +1447,7 @@ def cmd_hook(args, prof):
     except KeyboardInterrupt:
         s.log("stopped by user")
     except Exception as e:
+        failed = True
         s.log(f"ERROR: {e}")
     finally:
         # never leave the target halted at the hook: it would stall the system under test
@@ -1368,6 +1461,7 @@ def cmd_hook(args, prof):
         except Exception as e:
             s.log(f"could not check/resume the core: {e}")
         s.close()
+    return 1 if failed else 0
 
 
 # Vivado writes the core status with spaces ("WAITING FOR TRIGGER"), so it is normalised before comparing.
@@ -1405,8 +1499,11 @@ def _watch_stats_row(index, fields, row, src, st_cfg, compress, formats=None):
     capture - all off the capture thread, so none of it slows the cadence. A row is written even when the
     statistics fail: a missing row would be indistinguishable from a window that was never captured."""
     try:
-        if formats and src.lower().endswith(".csv"):
-            ila_csv_format(src, formats)
+        if src.lower().endswith(".csv"):
+            if formats:
+                ila_csv_format(src, formats)
+            else:
+                ila_csv_to_decimal(src)          # as in finish_capture: a hex export does not stay hex
     except Exception as e:
         row["note"] = f"format failed: {type(e).__name__}: {e}"[:200]
     try:
@@ -1444,7 +1541,13 @@ def cmd_watch(args, prof):
     cap, st_cfg = prof["capture"], prof["stats"]
     trig = args.trigger or cap["trigger"]
     pos = cap["position"]
-    fmt = args.format or "csv"
+    # --format, else the format the profile file itself states, else csv. The built-in default of a profile
+    # ("both") is not taken: writing the .ila takes longer than the upload and the CSV together (see the figures
+    # at ila_collect_rearm in the Tcl script), which would slow down every recording that never asked for it.
+    fmt = args.format or str(stated(prof, "capture", "format") or "csv").strip().lower()
+    if fmt not in FILE_FORMATS:                 # text from a profile, on its way into a Tcl command
+        raise RuntimeError(f"capture.format is {stated(prof, 'capture', 'format')!r}: it must be one of "
+                           f"{', '.join(FILE_FORMATS)}")
     radix, cmode = capture_words(cap)
     arm_cmd = f"ila_arm {tcl_trigger(trig)} {pos} {radix} {cmode}"
     n_clients = max(1, args.writers)
@@ -1456,6 +1559,7 @@ def cmd_watch(args, prof):
     s.log(f"watch: trigger {{{trig}}}, position {pos}, format {fmt}{' + gzip' if args.compress else ''}, "
           f"writers {n_clients}, limits: count={args.count} minutes={args.minutes} max_gb={args.max_gb}")
     n, waited, on_disk, retries, recoveries, empties = 0, 0.0, 0, 0, 0, 0
+    failed = False                             # an error ended the run, or it gave up: the exit code has to say so
     t_start = time.monotonic()                 # monotonic: a host that sleeps must not end the session early
     t_end = t_start + args.minutes * 60
     cycle, upload_ms, rearm_ms, write_ms = [], [], [], []
@@ -1525,6 +1629,7 @@ def cmd_watch(args, prof):
                 s.log(f"{viv.name} failed ({str(e)[:120]}) - recovery attempt {lost}/{args.max_retries}")
                 if lost > args.max_retries:
                     s.log(f"giving up after {lost} consecutive failures")
+                    failed = True
                     break
                 time.sleep(min(30, 2 ** lost))
                 recoveries += _watch_recover(s, prof, arm_cmd, core_id, fields, n, viv)
@@ -1577,6 +1682,7 @@ def cmd_watch(args, prof):
     except KeyboardInterrupt:
         s.log("stopped by user")
     except Exception as e:
+        failed = True
         s.log(f"ERROR: {type(e).__name__}: {e}")
     finally:
         for viv in list(writing):
@@ -1619,6 +1725,7 @@ def cmd_watch(args, prof):
             s.log(f"{retries} failure(s), {recoveries} recovery/recoveries during the session")
         s.log(f"output: {s.out}")
         s.close()
+    return 1 if failed else 0
 
 
 def _watch_row_when_written(index, fields, row, prefix, st_cfg, compress, write_future, formats=None):
@@ -1676,21 +1783,34 @@ def _convert_one(job):
     return dst, ila_csv_to_decimal(src, dst)
 
 
+def _convert_job(path):
+    """(source, destination) of what "convert" does with one file, or None when there is nothing to do with it:
+    an ILA CSV, plain or gzipped, is converted in place; a .ila archive gets a CSV next to it unless one is
+    there. The same for a file given by name and for a file found in a folder."""
+    if path.lower().endswith(".ila"):
+        if os.path.isfile(path) and not os.path.exists(path[:-4] + ".csv"):
+            return path, path[:-4] + ".csv"
+    elif path.lower().endswith((".csv", ".csv.gz")) and is_ila_csv(path):
+        return path, path
+    return None
+
+
 def cmd_convert(args, prof):
-    """Make ILA CSVs decimal. For a folder: extract a CSV from every .ila that has none, convert every ILA CSV
-    in place. For a file: convert it in place. .ila archives are never modified - they stay the ground truth."""
-    jobs = []
+    """Make ILA CSVs decimal: every ILA CSV (.csv, .csv.gz) is converted in place, and a CSV is extracted from
+    every .ila that has none - whether the path is a file or a folder of them. .ila archives are never
+    modified - they stay the ground truth. Exit code 1 when no path held a capture: an archive that has its
+    CSV already is one, with nothing left to do, so that the same command does not fail the second time."""
+    jobs, done_before = [], False
     for path in expand(args.paths):
         if os.path.isdir(path):
-            names = set(os.listdir(path))
-            for f in sorted(names):
-                full = os.path.join(path, f)
-                if f.endswith(".ila") and f[:-4] + ".csv" not in names:
-                    jobs.append((full, full[:-4] + ".csv"))
-                elif f.lower().endswith((".csv", ".csv.gz")) and is_ila_csv(full):
-                    jobs.append((full, full))
-        elif path.lower().endswith(".csv") and is_ila_csv(path):
-            jobs.append((path, path))
+            jobs += filter(None, (_convert_job(os.path.join(path, f)) for f in sorted(os.listdir(path))))
+            continue
+        job = _convert_job(path)
+        if job:
+            jobs.append(job)
+        elif path.lower().endswith(".ila") and os.path.isfile(path):
+            done_before = True
+            print(f"skipped (it has its CSV already, {path[:-4]}.csv): {path}")
         else:
             print(f"skipped (not an ILA CSV): {path}")
     print(f"{len(jobs)} ILA CSV(s) to check")
@@ -1701,6 +1821,7 @@ def cmd_convert(args, prof):
             if i % 50 == 0 or i == len(jobs):
                 print(f"[{i}/{len(jobs)}]", flush=True)
     print(f"{converted} CSV(s) written in decimal, {len(jobs) - converted} already decimal")
+    return 0 if jobs or done_before else 1
 
 
 def capture_summary(path, prof):
@@ -1728,7 +1849,10 @@ def capture_summary(path, prof):
 
 
 def cmd_summary(args, prof):
-    files = sorted(f for f in os.listdir(args.dir) if f.endswith((".ila", ".csv", ".csv.gz")))
+    try:
+        files = sorted(f for f in os.listdir(args.dir) if f.endswith((".ila", ".csv", ".csv.gz")))
+    except OSError as e:                         # no such folder, or a file: a slip in the command, said as one
+        raise RuntimeError(f"{args.dir}: the folder cannot be read ({e.strerror or e})")
     seen, rows = set(), []
     for f in files:
         name = f[:-7] if f.endswith(".csv.gz") else f[:-4]
@@ -1754,7 +1878,10 @@ def cmd_summary(args, prof):
 
 
 def cmd_stats(args, prof):
-    rows = [(os.path.basename(f), stats_of(f, prof["stats"])) for f in expand(args.files)]
+    try:
+        rows = [(os.path.basename(f), stats_of(f, prof["stats"])) for f in expand(args.files)]
+    except OSError as e:                         # a name that is no file, or a folder: said the same way
+        raise RuntimeError(f"{e.filename or ' '.join(args.files)}: the capture cannot be read ({e.strerror or e})")
     keys = list(dict.fromkeys(k for _, st in rows for k in st))       # union: a column present in only one
     header = [k for k in STAT_COLS if k in keys] + [k for k in keys if k.startswith("n_")]
     w = csv.writer(sys.stdout, lineterminator="\n")     # stdout is a text stream: "\r\n" would end up as "\r\r\n"
@@ -1765,27 +1892,32 @@ def cmd_stats(args, prof):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--profile", help="JSON profile with the project's paths, probes and hook (see profiles/)")
-    ap.add_argument("--out", help="output folder (default from the profile)")
-    # hardware overrides: with these a profile is optional - any .ltx can be used straight from the command line
-    ap.add_argument("--ltx", help="probe file (.ltx) of the bitstream on the board; overrides profile.hardware.ltx")
-    ap.add_argument("--tcl", help="Tcl script to use instead of the default scripts/vivado_ila_repl.tcl")
-    ap.add_argument("--server", help="hw_server <ip>[:port] (the PC the JTAG cable is attached to); default port 3121")
-    ap.add_argument("--device", help="device glob when the chain has several parts, e.g. 'xc7z020*'")
-    ap.add_argument("--ila-index", type=int, help="which ILA core of the device ('info' lists them)")
-    ap.add_argument("--jtag-hz", type=int, help="JTAG TCK frequency in Hz, e.g. 20000000 (0 = cable default)")
-    ap.add_argument("--target", default="unit", help="board name, used in the session folder name")
-    # these three may be given before or after the subcommand; SUPPRESS keeps the subparser copy from
-    # overwriting a value given globally
+    # The options of the whole tool may be given before or after the command: every command gets a copy of them.
+    # A subparser writes its defaults over what the top parser has read, so the copy has none (SUPPRESS) - a
+    # value given before the command would otherwise be put back to "not given", and --target to "unit".
     over = argparse.ArgumentParser(add_help=False)
     for a in (ap, over):
         d = {} if a is ap else {"default": argparse.SUPPRESS}
+        a.add_argument("--profile", help="JSON profile with the project's paths, probes and hook (see profiles/)", **d)
+        a.add_argument("--out", help="output folder (default from the profile)", **d)
+        # hardware overrides: with these a profile is optional - any .ltx can be used straight from the command line
+        a.add_argument("--ltx", help="probe file (.ltx) of the bitstream on the board; overrides profile.hardware.ltx",
+                       **d)
+        a.add_argument("--tcl", help="Tcl script to use instead of the default scripts/vivado_ila_repl.tcl", **d)
+        a.add_argument("--server", help="hw_server <ip>[:port] (the PC the JTAG cable is attached to); default port "
+                                        "3121", **d)
+        a.add_argument("--device", help="device glob when the chain has several parts, e.g. 'xc7z020*'", **d)
+        a.add_argument("--ila-index", type=int, help="which ILA core of the device ('info' lists them)", **d)
+        a.add_argument("--jtag-hz", type=int, help="JTAG TCK frequency in Hz, e.g. 20000000 (0 = cable default)", **d)
+        a.add_argument("--target", help="board name, used in the session folder name (default: unit)",
+                       **dict({"default": "unit"}, **d))
         a.add_argument("--trigger", help='"now" or "<probe> <compare-value>", e.g. "frame_start eq1\'bR"', **d)
         a.add_argument("--position", type=int, help="trigger position in samples", **d)
-        a.add_argument("--format", choices=["both", "ila", "csv"], help="what to write per capture", **d)
+        a.add_argument("--format", choices=FILE_FORMATS, help="what to write per capture", **d)
     sp = ap.add_subparsers(dest="cmd", required=True)
-    sp.add_parser("info")
-    ck = sp.add_parser("check"); ck.add_argument("--elf", help="also check the hook symbols in this ELF")
+    sp.add_parser("info", parents=[over])
+    ck = sp.add_parser("check", parents=[over])
+    ck.add_argument("--elf", help="also check the hook symbols in this ELF")
     ck.add_argument("--hook", action="store_true", help="require the hook fields even if no hook is configured")
     c = sp.add_parser("capture", parents=[over]); c.add_argument("--name", required=True); c.add_argument("--note")
     c.add_argument("--count", type=int, default=1, help="take this many captures in one session")
@@ -1812,22 +1944,40 @@ def main():
     k.add_argument("--minutes", type=int, default=60)
     k.add_argument("--plant", action="store_true", help="plant the hook breakpoint from xsct at the first halt")
     k.add_argument("--resume-at", nargs="*", default=[], help="addresses where an unrelated halt is resumed once")
-    v = sp.add_parser("convert"); v.add_argument("paths", nargs="+")
-    u = sp.add_parser("summary"); u.add_argument("dir")
-    t = sp.add_parser("stats"); t.add_argument("files", nargs="+")
+    # An abbreviation of one letter that meant an option of a command while the command took only its own options
+    # would fit several now ("capture --t": --tcl, --target or --trigger) and be refused. It keeps the meaning it
+    # had, as a spelling of its own that the help does not list.
+    for cmd, short, dest, kind in ((c, "--t", "trigger", str), (wt, "--t", "trigger", str), (k, "--t", "trigger", str),
+                                   (c, "--p", "position", int), (wt, "--p", "position", int),
+                                   (c, "--i", "interval", float)):
+        cmd.add_argument(short, dest=dest, type=kind, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    v = sp.add_parser("convert", parents=[over]); v.add_argument("paths", nargs="+")
+    u = sp.add_parser("summary", parents=[over]); u.add_argument("dir")
+    t = sp.add_parser("stats", parents=[over]); t.add_argument("files", nargs="+")
     args = ap.parse_args()
-    for a in ("trigger", "position", "format"):
+    for a in ("profile", "out", "ltx", "tcl", "server", "device", "ila_index", "jtag_hz", "trigger", "position",
+              "format"):
         args.__dict__.setdefault(a, None)
+    args.__dict__.setdefault("target", "unit")
     try:
         prof = apply_overrides(load_profile(args.profile), args)
     except json.JSONDecodeError as e:
         raise SystemExit(f"{args.profile}: invalid JSON at line {e.lineno}, column {e.colno}: {e.msg}")
+    except OSError as e:                         # no such file, a folder, no permission
+        raise SystemExit(f"{args.profile}: the profile cannot be read ({e.strerror or e})")
     if args.position is not None:
         # into the profile, once, where every command reads it: taken as "args.position or the profile's" at each
         # use, --position 0 counted as not given
         prof["capture"]["position"] = args.position
-    rc = {"info": cmd_info, "check": cmd_check, "capture": cmd_capture, "hook": cmd_hook, "watch": cmd_watch,
-          "convert": cmd_convert, "summary": cmd_summary, "stats": cmd_stats}[args.cmd](args, prof)
+    try:
+        rc = {"info": cmd_info, "check": cmd_check, "capture": cmd_capture, "hook": cmd_hook, "watch": cmd_watch,
+              "convert": cmd_convert, "summary": cmd_summary, "stats": cmd_stats}[args.cmd](args, prof)
+    except RuntimeError as e:
+        # The one type the driver raises for what can go wrong in a run - no Vivado, no connection, a trigger or
+        # an address that cannot be used (see Repl.cmd). The sentence alone, and exit code 1: Vivado has been
+        # closed in order by then, in the finally blocks of the commands. Anything else is a fault of this
+        # program and keeps its traceback, and Ctrl-C is not an error.
+        raise SystemExit(str(e))
     sys.exit(rc or 0)
 
 

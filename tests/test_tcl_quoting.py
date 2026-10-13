@@ -114,7 +114,20 @@ def test_ipv6_address_is_text_not_a_command():
 
 
 def test_address_cannot_end_its_own_word():
-    assert open_command(url="a}; exec calc; #").startswith('ila_open "a\\}; exec calc; #" ')
+    # no session is made with such an address (see below): the word is safe by itself all the same
+    prof = ic.load_profile(None)
+    session = ic.Session(None, prof, ephemeral=True)
+    prof["hardware"]["url"] = "a}; exec calc; #"
+    assert session._ila_open_cmd().startswith('ila_open "a\\}; exec calc; #" ')
+
+
+def test_session_is_not_made_with_text_that_is_no_address():
+    with pytest.raises(RuntimeError, match="is not a hw_server address"):
+        open_command(url="a}; exec calc; #")
+
+
+def test_session_brings_the_address_into_its_one_form():
+    assert open_command(url="TCP:192.0.2.10").startswith("ila_open {192.0.2.10:3121} ")
 
 
 def test_filters_core_position_and_jtag_clock():

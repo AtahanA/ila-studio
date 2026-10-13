@@ -146,7 +146,7 @@ The card "Trigger Rules & Capture Mode". The mode decides the label of the captu
 |---|---|---|
 | **Just Capture** | **Just Capture (Now)** | The ILA buffer is captured at once (`run_hw_ila -trigger_now`). |
 | **Capture on Rule** | **Arm & Capture on Trigger** | The core is armed and waits for the trigger, for at most the timeout. |
-| **Constant Capture** | **Start Constant Capture** | Window after window in one Vivado session until **Stop Capture**. With a trigger each window waits for it; without one the windows are taken one after the other at once. Every window is saved and listed, and the capture navigator of the Signal Analysis steps through them. |
+| **Constant Capture** | **Start Constant Capture** | Window after window in one Vivado session until **Stop Capture**. The run also ends by itself after 100000 windows, or when less than 1 GB is free on the capture drive; the message then says which. With a trigger each window waits for it; without one the windows are taken one after the other at once. Every window is saved and listed, and the capture navigator of the Signal Analysis steps through them. |
 
 **The rule.** Choose the probe under **Select Trigger Probe** or with **Set Trigger** in the probe list.
 
@@ -472,8 +472,7 @@ GUI (React)  --invoke-->  Rust (async commands, never on the UI thread)
 
 ## Command line
 
-The capture script works without the GUI. Global options stand BEFORE the command; `--trigger`, `--position`
-and `--format` may also follow `capture`, `watch` or `hook`.
+The capture script works without the GUI. Its global options may stand before or after the command.
 
 ```powershell
 python ila_capture.py --help
@@ -483,20 +482,29 @@ python ila_capture.py --profile profiles\my-board.json capture --name first --tr
 ```
 
 A profile is optional: `--ltx` and `--server` are enough for `info`, `capture` and `watch`. The other global
-options are `--device`, `--ila-index`, `--jtag-hz`, `--out`, `--tcl` and `--target` (a board name, used in the
-name of the session folder). Without a profile and without `--out`, captures go to `captures\` in the current
-directory.
+options are `--device`, `--ila-index`, `--jtag-hz`, `--out`, `--tcl`, `--target` (a board name, used in the
+name of the session folder), `--trigger`, `--position` and `--format`. Without a profile and without `--out`,
+captures go to `captures\` in the current directory. `--server` takes what the hw_server field of the GUI
+takes, and text that is no address is refused before anything is started.
+
+A run that cannot do its work - no Vivado, no connection, a profile that cannot be read, an address or a
+trigger that cannot be used - prints one line that says why and ends with exit code 1. `watch` and `hook` log
+an error that ends them and then exit with 1 as well, and so does a `watch` that gave up after too many
+failures in a row (`--max-retries`).
 
 | Command | What it does |
 |---|---|
 | `check` | Validates a profile without touching hardware. `--hook` also requires the hook keys and the hook tools; `--elf FILE` checks the hook symbols in an ELF file. |
 | `info` | Connects and prints the ILA cores, the properties of the selected core and its probes. |
 | `capture --name N` | One capture now, or on `--trigger`. `--count N` takes N captures in the same Vivado session, `--interval S` waits S seconds between them, `--note TEXT` goes into `index.csv`. |
-| `watch` | Records continuously: arm, collect, re-arm, write, until `--count`, `--minutes` (default 60), `--max-gb` (default 10) or `--min-free-gb` (default 2) ends it, or Ctrl-C. The CPU is never touched. The CSVs are gzipped in the background unless `--no-compress`. `--writers 2` lets two Vivado processes take turns. At the end it reports how much of the timeline was covered. |
+| `watch` | Records continuously: arm, collect, re-arm, write, until `--count`, `--minutes` (default 60), `--max-gb` (default 10) or `--min-free-gb` (default 2) ends it, or Ctrl-C. The CPU is never touched. It writes CSVs unless `--format` or `capture.format` of the profile asks for something else, and gzips them in the background unless `--no-compress`. `--writers 2` lets two Vivado processes take turns. At the end it reports how much of the timeline was covered. |
 | `hook --elf FILE` | Capture driven by the firmware: waits for the CPU to halt at the hook function, reads the variable the firmware filled, captures, resumes. Repeats until `--count` or `--minutes`. `--plant` plants the breakpoint itself, the first time it finds the CPU halted somewhere else; `--resume-at ADDR` resumes once from a halt at that address. Needs xsct, `nm` and `objdump`, and the `hook` section of a profile. |
-| `convert PATH...` | Makes ILA CSVs decimal. For a folder it also extracts a CSV from every `.ila` that has none. `.ila` archives are never changed. |
+| `convert PATH...` | Makes ILA CSVs (`.csv`, `.csv.gz`) decimal and extracts a CSV from every `.ila` that has none. A path is one such file or a folder of them. `.ila` archives are never changed. Exit code 1 when no path held anything to convert. |
 | `stats FILE...` | Prints the statistics of existing `.csv` / `.csv.gz` / `.ila` files as a table (no hardware). |
 | `summary DIR` | Writes `run_summary.csv` into a folder of captures: one row for each capture with its edges, event counts and timing (no hardware). |
+
+`convert` skips a `.ila` whose CSV is there already and prints a line that says so. Such an archive counts as
+converted: the same command, run a second time, does not end with exit code 1.
 
 `stats` and `summary` follow the `stats` section of the profile. Without one, `stats` prints only the number of
 samples of each file. They can be tried on the demo data, which `python ila_bridge.py demo-capture` writes as

@@ -4,6 +4,7 @@
 """The command lines. Hardware commands of ila_capture.py run in this process against the recorder that stands
 in for Vivado; the commands that need no hardware are started as real processes, from a copy of the scripts."""
 import csv
+import gzip
 import json
 import os
 import subprocess
@@ -64,6 +65,59 @@ def test_trigger_position_and_format_may_stand_before_the_command(vivado, cli, h
     assert capture_commands(vivado)[0].endswith("} {frame_start eq1'bR} 0 1 csv UNSIGNED ALWAYS")
 
 
+@pytest.mark.parametrize("side", ["before", "after"])
+def test_every_option_of_the_whole_tool_may_stand_on_either_side_of_the_command(vivado, cli, write, tmp_path, side):
+    script, ltx = write("mine.tcl", ""), str(tmp_path / "top.ltx")
+    options = ["--profile", write("p.json", json.dumps({"capture": {"timeout_min": 2}})),
+               "--server", "192.0.2.10", "--ltx", ltx, "--out", str(tmp_path / "out"),
+               "--tcl", script, "--device", "xc7z020*", "--ila-index", "1", "--jtag-hz", "6000000",
+               "--target", "my-board", "--trigger", "frame_start eq1'bR", "--position", "0", "--format", "csv"]
+    command = ["capture", "--name", "c"]
+    # before: a command writes its defaults over what was read so far, and must not put one of these back
+    assert cli(*(options + command if side == "before" else command + options)) == 0
+    assert vivado.started["vivado"][-2:] == ["-source", script]
+    assert "ila_open {192.0.2.10:3121} {%s} {xc7z020*} 1 {*} 6000000" % ltx.replace("\\", "/") in vivado
+    assert capture_commands(vivado)[0].endswith("/c} {frame_start eq1'bR} 0 2 csv UNSIGNED ALWAYS")
+    (session,) = (tmp_path / "out").iterdir()
+    assert session.name.endswith("_my-board")
+
+
+def test_option_after_the_command_wins_over_the_same_one_before_it(vivado, cli, hardware, tmp_path):
+    cli(*hardware, "--target", "my-board", "--position", "5", "capture", "--name", "c", "--position", "7")
+    assert capture_commands(vivado)[0].endswith("} {now} 7 1 both UNSIGNED ALWAYS")
+    (session,) = (tmp_path / "out").iterdir()
+    assert session.name.endswith("_my-board")            # not given again: as it stood before the command
+
+
+def test_abbreviations_of_one_letter_keep_the_meaning_they_had(vivado, cli, hardware, tmp_path):
+    # --t, --p and --i fitted one option of a command each before the commands took the options of the whole
+    # tool as well: --trigger (not --tcl or --target), --position (not --profile), --interval (not --ila-index)
+    assert cli(*hardware, "capture", "--name", "c", "--t", "frame_start eq1'bR", "--p", "0", "--i", "0") == 0
+    assert capture_commands(vivado)[0].endswith("} {frame_start eq1'bR} 0 1 both UNSIGNED ALWAYS")
+    assert cli(*hardware, "watch", "--count", "1", "--minutes", "0.1", "--t", "frame_start eq1'bF", "--p", "7") == 0
+    assert "ila_arm {frame_start eq1'bF} 7 UNSIGNED ALWAYS" in vivado
+    assert vivado.started["vivado"][-1] == ic.resolve_tcl(None)      # the Tcl script and the target as they were
+    assert all(session.name.endswith("_unit") for session in (tmp_path / "out").iterdir())
+
+
+def test_session_is_called_unit_when_no_target_is_given(vivado, cli, hardware, tmp_path):
+    assert cli("info", *hardware) == 0                   # a command that makes no session folder takes them too
+    cli("capture", "--name", "c", *hardware)
+    (session,) = (tmp_path / "out").iterdir()
+    assert session.name.endswith("_unit")
+
+
+def test_profile_may_follow_the_commands_that_need_no_hardware(cli, write, tmp_path, capsys):
+    profile = write("p.json", json.dumps({"stats": {"event_probes": ["rx_valid"]}}))
+    capture = write("cap.csv", HEAD + "top/rx_valid\n0,0,0,0\n1,1,1,1\n")
+    assert cli("stats", capture, "--profile", profile) == 0
+    assert capsys.readouterr().out.splitlines() == ["file,rows,ctrl,n_rx_valid", "cap.csv,2,,1"]
+    assert cli("summary", str(tmp_path), "--profile", profile) == 0
+    with open(str(tmp_path / "run_summary.csv"), newline="") as f:
+        assert next(csv.reader(f)) == ["name", "n_rows", "time_unit", "rx_valid_n", "rx_valid_first",
+                                       "rx_valid_last_off", "ctrl"]
+
+
 def test_watch_records_a_window(vivado, cli, hardware, tmp_path):
     # --minutes 0.1: should the window never come, the run ends by itself after six seconds
     assert cli(*hardware, "watch", "--count", "1", "--minutes", "0.1", "--position", "0") == 0
@@ -72,7 +126,47 @@ def test_watch_records_a_window(vivado, cli, hardware, tmp_path):
     (session,) = (tmp_path / "out").iterdir()
     (row,) = index_rows(session)
     assert (row["name"], row["file"]) == ("w000000", "w000000.csv.gz")       # gzipped once it is in the index
-    assert (session / "w000000.csv.gz").exists()
+    # the recorder wrote the bus in hex: in the file that is kept it is decimal, as "capture" leaves it
+    with gzip.open(str(session / "w000000.csv.gz"), "rt") as f:
+        assert f.read().splitlines()[1:] == ["0,0,1,0,10", "1,1,0,1,255"]
+    assert row["note"] == ""
+
+
+def test_watched_window_that_cannot_be_made_decimal_still_gets_its_row(write, tmp_path):
+    # one column in hex and in decimal: the file is kept as it is, and the index says what happened to it
+    src = write("w000000.csv", HEAD + "top/x[7:0]\n0,0,0,0a\n1,1,1,100\n")
+    index, fields = str(tmp_path / "index.csv"), ic.watch_fields({})
+    note = ic._watch_stats_row(index, fields, {"name": "w000000"}, src, {"mode": "none"}, False)
+    assert "ValueError: column top/x[7:0]: both hex and decimal values" in note
+    with open(index, newline="") as f:
+        (row,) = csv.DictReader(f, fieldnames=fields)
+    assert (row["name"], row["file"], row["note"]) == ("w000000", "w000000.csv", note)
+
+
+@pytest.mark.parametrize("capture, options, written", [
+    ({"format": "ila"}, [], "ila"),                      # what the profile file itself states
+    ({"format": "Both"}, [], "both"),
+    ({"position": 300}, [], "csv"),                      # not stated: csv, not the "both" of the built-in defaults
+    ({"format": "ila"}, ["--format", "csv"], "csv"),     # the command line wins
+])
+def test_watch_writes_the_format_the_profile_states(vivado, cli, hardware, write, capture, options, written):
+    profile = write("p.json", json.dumps({"capture": capture}))
+    assert cli("--profile", profile, *hardware, "watch", "--count", "1", "--minutes", "0.1", *options) == 0
+    (command,) = [command for command in vivado if command.startswith("ila_write_last ")]
+    assert command.endswith("/w000000} " + written)
+
+
+def test_watch_without_a_profile_writes_csv(vivado, cli, hardware):
+    assert cli(*hardware, "watch", "--count", "1", "--minutes", "0.1") == 0
+    assert [command.split(" ")[-1] for command in vivado if command.startswith("ila_write_last ")] == ["csv"]
+
+
+def test_watch_refuses_a_format_of_a_profile_that_is_none(vivado, cli, hardware, write, tmp_path):
+    # it would go into a Tcl command as it is written
+    profile = write("p.json", json.dumps({"capture": {"format": "csv; exec calc"}}))
+    message = cli("--profile", profile, *hardware, "watch", "--count", "1", "--minutes", "0.1")
+    assert message == "capture.format is 'csv; exec calc': it must be one of both, ila, csv"
+    assert vivado == [] and not (tmp_path / "out").exists()
 
 
 def test_profile_that_is_not_json_is_reported_with_the_place(cli, write):
@@ -80,11 +174,135 @@ def test_profile_that_is_not_json_is_reported_with_the_place(cli, write):
     assert "p.json: invalid JSON at line 1, column 10" in message
 
 
+def test_profile_that_is_not_there_is_reported_in_a_sentence(cli, tmp_path):
+    message = cli("--profile", str(tmp_path / "gone.json"), "check")
+    assert message == "%s: the profile cannot be read (No such file or directory)" % (tmp_path / "gone.json")
+
+
+# A run that fails ends with the sentence alone and the exit code 1: main leaves through SystemExit with the
+# sentence, which Python prints as it is. A traceback would be any other exception coming out of main.
+@pytest.fixture
+def nowhere(no_vivado, write, tmp_path):
+    """A profile whose Vivado is not there, on a PC where the search finds none either."""
+    return write("nowhere.json", json.dumps({"tools": {"vivado": str(tmp_path / "vivado.bat")}}))
+
+
+@pytest.mark.parametrize("command", [["info"], ["capture", "--name", "c"]])
+def test_run_that_cannot_start_vivado_ends_with_the_sentence_alone(nowhere, cli, hardware, command):
+    message = cli("--profile", nowhere, *hardware, *command)
+    assert message.startswith("Vivado not found (tools.vivado is ")
+
+
+def test_unusable_trigger_ends_with_the_sentence_alone(vivado, cli, hardware, tmp_path):
+    message = cli(*hardware, "capture", "--name", "c", "--trigger", "a}b eq1")
+    assert message.startswith("the trigger 'a}b eq1' cannot be used")
+    assert vivado == [] and not (tmp_path / "out").exists()
+
+
+def test_failed_connect_ends_with_the_sentence_alone(vivado, cli, hardware):
+    vivado.failing["ila_open"] = "no hardware target on 192.0.2.10:3121"
+    message = cli(*hardware, "info")
+    assert message.startswith("vivado: 'ila_open ")
+    assert message.endswith("failed: no hardware target on 192.0.2.10:3121")
+
+
+def test_capture_or_folder_that_is_not_there_ends_with_the_sentence_alone(cli, write, tmp_path):
+    # the commands that need no hardware, and a slip in a name: what follows is the reason the system gives
+    capture, gone = write("cap.csv", HEX), str(tmp_path / "gone.csv")
+    assert cli("stats", capture, gone).startswith(gone + ": the capture cannot be read (")
+    for folder in (str(tmp_path / "gone"), capture):     # not there, and a file
+        assert cli("summary", folder).startswith(folder + ": the folder cannot be read (")
+
+
+def test_hook_whose_tools_are_not_installed_ends_with_the_sentence_alone(vivado, cli, hardware, write, tmp_path):
+    # nm and objdump are run as the profile names them, before anything else is started
+    nm = str(tmp_path / "bin" / "nm.exe")
+    profile = write("hook.json", json.dumps({"tools": {"nm": nm},
+                                             "hook": {"symbol": "capture_hook", "info_symbol": "capture_info"}}))
+    message = cli("--profile", profile, *hardware, "hook", "--elf", "app.elf")
+    assert message.startswith("tools.nm of the profile cannot be started (%s: " % nm)
+    assert vivado.started == {} and not (tmp_path / "out").exists()
+
+
+def test_watch_that_ends_in_an_error_exits_with_1(nowhere, cli, hardware, tmp_path):
+    assert cli("--profile", nowhere, *hardware, "watch", "--count", "1", "--minutes", "0.1") == 1
+    (session,) = (tmp_path / "out").iterdir()
+    assert "ERROR: RuntimeError: Vivado not found" in (session / "session.log").read_text()
+
+
+def test_watch_that_gives_up_exits_with_1(vivado, cli, hardware, tmp_path):
+    vivado.failing["ila_collect_rearm"] = "the hardware target is gone"
+    assert cli(*hardware, "watch", "--count", "1", "--minutes", "0.1", "--max-retries", "0") == 1
+    (session,) = (tmp_path / "out").iterdir()
+    assert "giving up after 1 consecutive failures" in (session / "session.log").read_text()
+
+
 def test_file_patterns_are_expanded_by_the_tool_itself(write, tmp_path):
     # cmd.exe and PowerShell hand "*.csv" on as it is
     files = sorted([write("b.csv", ""), write("a.csv", "")])
     assert ic.expand([str(tmp_path / "*.csv")]) == files
     assert ic.expand([str(tmp_path / "*.ila")]) == [str(tmp_path / "*.ila")]      # no hit: left as it was given
+
+
+# ---------------------------------------------------------------- the hw_server address
+def test_server_is_brought_into_its_one_form(vivado, cli, tmp_path):
+    cli("--server", "TCP:192.0.2.10", "--ltx", str(tmp_path / "top.ltx"), "--out", str(tmp_path / "out"), "info")
+    assert [command.split(" ")[1] for command in vivado if command.startswith("ila_open ")] == ["{192.0.2.10:3121}"]
+
+
+@pytest.mark.parametrize("server, said", [
+    ("a&echo.SECOND&rem", "'a&echo.SECOND&rem' is not a hw_server address"),     # cmd would run what follows "&"
+    ("http://192.0.2.10", "'http://192.0.2.10' is not a hw_server address"),
+    ("", "no hw_server address given"),                  # not: the address of the profile, without a word
+    ("   ", "no hw_server address given"),
+])
+def test_server_that_is_no_address_ends_the_run_before_anything_is_started(vivado, cli, tmp_path, server, said):
+    for command in (["info"], ["capture", "--name", "c"], ["watch", "--count", "1"]):
+        message = cli("--server", server, "--ltx", str(tmp_path / "top.ltx"), "--out", str(tmp_path / "out"), *command)
+        assert message.startswith(said)
+    assert vivado == [] and vivado.started == {} and not (tmp_path / "out").exists()
+
+
+def test_address_of_a_profile_is_checked_as_well(vivado, cli, write, tmp_path):
+    profile = write("p.json", json.dumps({"hardware": {"url": "a[exec calc.exe]::"}}))
+    message = cli("--profile", profile, "--ltx", str(tmp_path / "top.ltx"), "--out", str(tmp_path / "out"), "info")
+    assert message.startswith("'a[exec calc.exe]::' is not a hw_server address")
+    assert vivado.started == {}
+
+
+# ---------------------------------------------------------------- the Tcl script of a session
+def session_log(tmp_path):
+    (session,) = (tmp_path / "out").iterdir()
+    return (session / "session.log").read_text()
+
+
+def test_log_names_the_tcl_script_and_its_version(vivado, cli, hardware, tmp_path, capsys):
+    cli(*hardware, "capture", "--name", "c")
+    assert " Tcl script %s, version %d\n" % (ic.resolve_tcl(None), ic.SCRIPT_VERSION) in session_log(tmp_path)
+    assert "Tcl script" not in capsys.readouterr().out   # for the log, not for the screen
+
+
+def test_log_names_the_script_of_a_further_vivado_as_well(vivado, cli, hardware, tmp_path):
+    cli(*hardware, "watch", "--count", "2", "--minutes", "0.1", "--writers", "2")
+    log = session_log(tmp_path)
+    assert " Tcl script %s, version %d\n" % (ic.resolve_tcl(None), ic.SCRIPT_VERSION) in log
+    assert " [vivado-2] Tcl script %s\n" % ic.resolve_tcl(None) in log
+    # the version is asked of the first Vivado only: the further one sourced the same file
+    assert sum(command.startswith("set ::ILA_CHECK") for command in vivado) == 1
+
+
+def test_script_of_ones_own_that_states_no_version_is_not_called_older(vivado, cli, hardware, tmp_path, capsys):
+    vivado.script = "version=0;missing="
+    cli(*hardware, "capture", "--name", "c")
+    assert "version not stated" in session_log(tmp_path)
+    assert "older than this program" not in capsys.readouterr().out
+
+
+def test_script_with_a_lower_version_is_said_to_be_older(vivado, cli, hardware, capsys):
+    vivado.script = "version=%d;missing=" % (ic.SCRIPT_VERSION - 1)
+    cli(*hardware, "capture", "--name", "c")
+    assert "WARNING The Tcl script %s is older than this program (it is version %d, this program expects %d): " % (
+        ic.resolve_tcl(None), ic.SCRIPT_VERSION - 1, ic.SCRIPT_VERSION) in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------- real processes, no hardware
@@ -108,10 +326,20 @@ def test_check_passes_a_profile_whose_vivado_is_found_by_searching(app, write, t
         "tools": {"vivado": str(tmp_path / "elsewhere" / "vivado.bat")},      # not there: a run would search
         "hardware": {"ltx": write("top.ltx", "<probeData/>")},
         "capture": {"out": str(tmp_path / "out")}}))
-    # options of the whole tool, such as --profile, stand before the command
-    done = run(app, "ila_capture.py", "--profile", profile, "check", XILINX_VIVADO=str(tmp_path / "Vivado"))
-    assert done.returncode == 0
-    assert done.stdout.rstrip().endswith("OK")
+    # options of the whole tool, such as --profile, stand before the command or after it
+    for order in (["--profile", profile, "check"], ["check", "--profile", profile]):
+        done = run(app, "ila_capture.py", *order, XILINX_VIVADO=str(tmp_path / "Vivado"))
+        assert done.returncode == 0
+        assert done.stdout.rstrip().endswith("OK")
+
+
+def test_failed_run_prints_one_line_and_exits_with_1(app, tmp_path):
+    # no traceback. Neither of the two gets as far as looking for Vivado
+    for argv in (["--profile", str(tmp_path / "gone.json"), "check"],
+                 ["capture", "--name", "c", "--trigger", "a}b eq1", "--out", str(tmp_path / "out")]):
+        done = run(app, "ila_capture.py", *argv)
+        assert done.returncode == 1 and done.stdout == ""
+        assert len(done.stderr.splitlines()) == 1 and "Traceback" not in done.stderr
 
 
 def test_stats_prints_one_row_per_file(app, write):
@@ -152,6 +380,46 @@ def test_convert_makes_a_folder_decimal(app, write, tmp_path):
     assert (tmp_path / "b.csv").read_text() == DEC       # extracted from the archive ...
     assert (tmp_path / "b.ila").read_bytes() == archive  # ... which itself is never touched
     assert (tmp_path / "notes.csv").read_text() == "not,a,capture\n"
+
+
+@pytest.mark.parametrize("given, written", [("w000000.csv.gz", "w000000.csv.gz"), ("w000000.ila", "w000000.csv")])
+def test_convert_takes_a_single_file_as_it_does_in_a_folder(app, write, tmp_path, given, written):
+    # .csv.gz is what "watch" leaves behind, so it is what a recording consists of
+    path = write(given, HEX)
+    before = (tmp_path / given).read_bytes()
+    done = run(app, "ila_capture.py", "convert", path)
+    assert done.returncode == 0
+    assert "skipped" not in done.stdout and "1 CSV(s) written in decimal, 0 already decimal" in done.stdout
+    assert ic.read_ila_text(str(tmp_path / written)) == DEC
+    if given.endswith(".ila"):
+        assert (tmp_path / given).read_bytes() == before                 # the archive itself is never rewritten
+
+
+def test_convert_says_what_it_skipped_and_fails_when_nothing_was_there_to_convert(app, write, tmp_path):
+    notes = write("notes.csv", "not,a,capture\n")
+    done = run(app, "ila_capture.py", "convert", notes, str(tmp_path / "gone.csv.gz"))
+    assert done.returncode == 1
+    assert done.stdout.splitlines()[:3] == [
+        "skipped (not an ILA CSV): " + notes,
+        "skipped (not an ILA CSV): " + str(tmp_path / "gone.csv.gz"),
+        "0 ILA CSV(s) to check"]
+
+
+def test_convert_of_an_archive_does_not_fail_the_second_time(app, write, tmp_path):
+    # a script that converts an archive by name on every run: from the second run on its CSV is there, which
+    # leaves nothing to do and is nothing wrong
+    archive = write("b.ila", HEX)
+    for said in ("1 ILA CSV(s) to check", "skipped (it has its CSV already, %s): %s" % (tmp_path / "b.csv", archive)):
+        done = run(app, "ila_capture.py", "convert", archive)
+        assert (done.returncode, done.stdout.splitlines()[0]) == (0, said)
+        assert (tmp_path / "b.csv").read_text() == DEC
+    # ... also next to a path that holds no capture: one that was converted before is enough
+    assert run(app, "ila_capture.py", "convert", archive, write("notes.csv", "not,a,capture\n")).returncode == 0
+
+
+def test_convert_of_a_folder_without_captures_fails(app, tmp_path):
+    (tmp_path / "empty").mkdir()
+    assert run(app, "ila_capture.py", "convert", str(tmp_path / "empty")).returncode == 1
 
 
 def test_bridge_answers_with_one_json_document(app, write):

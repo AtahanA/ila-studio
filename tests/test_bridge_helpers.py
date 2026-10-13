@@ -7,9 +7,11 @@ import types
 import pytest
 
 import ila_bridge as ib
+import ila_capture as ic
 
 
 # ---------------------------------------------------------------- the hw_server address
+# The check itself is the driver's: the bridge and the command line of ila_capture.py go by the same one.
 @pytest.mark.parametrize("typed, address", [
     ("localhost", "localhost:3121"),                     # the default port is added
     ("192.0.2.10:3121", "192.0.2.10:3121"),
@@ -21,13 +23,13 @@ import ila_bridge as ib
     ("2001:db8::10", "2001:db8::10"),
 ])
 def test_address_as_host_and_port(typed, address):
-    assert ib.normalise_url(typed) == address
+    assert ic.normalise_url(typed) == address
 
 
-@pytest.mark.parametrize("typed", ["", "   ", "tcp:"])
+@pytest.mark.parametrize("typed", ["", "   ", "tcp:", None])
 def test_no_address_at_all(typed):
     with pytest.raises(RuntimeError, match="no hw_server address given"):
-        ib.normalise_url(typed)
+        ic.normalise_url(typed)
 
 
 @pytest.mark.parametrize("typed", [
@@ -45,7 +47,13 @@ def test_no_address_at_all(typed):
 ])
 def test_text_that_is_no_address_is_refused(typed):
     with pytest.raises(RuntimeError, match="is not a hw_server address"):
-        ib.normalise_url(typed)
+        ic.normalise_url(typed)
+
+
+def test_address_in_its_one_form_is_left_as_it_is():
+    # a session applies the check to an address the bridge has already put through it
+    for address in ("localhost:3121", "[::1]:3121", "[fe80::1%eth0]:3122", "2001:db8::10"):
+        assert ic.normalise_url(address) == address
 
 
 def test_reachability_is_asked_of_the_right_host_and_port(monkeypatch):

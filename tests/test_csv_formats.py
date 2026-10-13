@@ -132,6 +132,26 @@ def test_hex_nobody_asked_about_becomes_unsigned_decimal():
     assert ic.ila_text_formatted(HEX, {}) == (DEC, {"x[7:0]": "unsigned"})
 
 
+def test_0x_column_nobody_asked_about_is_left_as_it_is():
+    # a file that was formatted before, formatted again with other formats: the hex somebody chose then stays
+    text = HEAD + "top/a[7:0],top/b[7:0]\n0,0,0,0x0A,5\n1,1,1,0xFF,200\n"
+    assert ic.ila_text_formatted(text, {"b": "signed"}) == (
+        HEAD + "top/a[7:0],top/b[7:0]\n0,0,0,0x0A,5\n1,1,1,0xFF,-56\n", {"b[7:0]": "signed"})
+    assert ic.ila_text_formatted(text, {}) == (text, {})
+
+
+def test_0x_column_is_rewritten_when_it_is_asked_about():
+    text = HEAD + "top/a[7:0]\n0,0,0,0x0A\n1,1,1,0xFF\n"
+    assert ic.ila_text_formatted(text, {"a": "unsigned"}) == (HEAD + "top/a[7:0]\n0,0,0,10\n1,1,1,255\n",
+                                                             {"a[7:0]": "unsigned"})
+
+
+def test_convert_still_makes_a_0x_column_decimal():
+    # "convert" promises decimal for the whole file, whatever was chosen when it was written
+    assert ic.ila_text_to_decimal(HEAD + "top/a[7:0]\n0,0,0,0x0A\n1,1,1,0xFF\n") == (
+        HEAD + "top/a[7:0]\n0,0,0,10\n1,1,1,255\n", ["a[7:0]"])
+
+
 def test_signed_column_is_written_unsigned_again():
     text, _ = ic.ila_text_formatted(HEAD + "top/x[7:0]\n0,0,0,10\n1,1,1,-1\n", {"x": "unsigned"})
     assert text == DEC

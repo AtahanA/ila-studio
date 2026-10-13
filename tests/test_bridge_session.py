@@ -9,6 +9,7 @@ import types
 import pytest
 
 import ila_bridge as ib
+import ila_capture as ic
 
 
 def job(*argv):
@@ -64,6 +65,21 @@ def test_server_address_is_normalised_for_the_session(reachable, ltx):
 def test_text_that_is_no_address_gets_no_session(reachable, ltx):
     with pytest.raises(RuntimeError, match="is not a hw_server address"):
         ib.make_session(job("query-hardware", "--server", "a[exec calc.exe]::", "--ltx", ltx), ephemeral=True)
+
+
+def test_blank_address_is_said_to_be_missing(reachable, ltx):
+    with pytest.raises(RuntimeError, match="no hw_server address given"):
+        ib.make_session(job("query-hardware", "--server", "   ", "--ltx", ltx), ephemeral=True)
+
+
+def test_address_is_judged_by_the_check_of_the_driver(ltx, monkeypatch):
+    # one check for the GUI and the command line: the bridge has none of its own that could come to differ.
+    # What the check of the driver makes of the address is what the bridge then asks the network about.
+    asked = []
+    monkeypatch.setattr(ic, "normalise_url", lambda url: "as-the-driver-says:3121")
+    monkeypatch.setattr(ib, "check_reachable", asked.append)
+    ib.make_session(job("query-hardware", "--server", "192.0.2.10", "--ltx", ltx), ephemeral=True)
+    assert asked == ["as-the-driver-says:3121"]
 
 
 def test_profile_that_is_not_json_is_reported_with_the_place(reachable, ltx, write):
@@ -132,3 +148,52 @@ def test_run_of_windows_with_two_vivado_engines(vivado, reachable, ltx, tmp_path
     assert (result["captures"], result["lost"]) == (2, 0)
     (session,) = (tmp_path / "out").iterdir()
     assert sorted(p.name for p in session.glob("w_*.csv")) == ["w_0000.csv", "w_0001.csv"]
+
+
+@pytest.fixture
+def run_of_windows(vivado, reachable, ltx, tmp_path, capsys, monkeypatch):
+    """run_of_windows("--count", "0") runs that capture job against the recorder and returns its answer and its
+    session folder. The capture drive counts as empty, and a run until stopped ends after two windows."""
+    monkeypatch.setattr(ib.shutil, "disk_usage", lambda path: types.SimpleNamespace(free=1 << 40))
+    monkeypatch.setattr(ib, "MAX_WINDOWS", 2)
+
+    def run(*options):
+        ib.cmd_capture(job("capture", "--name", "w", "--ltx", ltx, "--format", "csv", "--out", str(tmp_path / "out"),
+                           *options))
+        (session,) = (tmp_path / "out").iterdir()
+        return result_of(capsys), session
+    return run
+
+
+def test_run_until_stopped_says_that_it_ended_at_the_limit(run_of_windows):
+    result, session = run_of_windows("--count", "0")
+    # nobody pressed Stop and nothing failed: without a reason the answer would read like a run that was through
+    assert (result["success"], result["captures"], result["stopped"]) == (True, 2, False)
+    assert result["message"] == ("Captured 2 window(s) into %s - the run ended by itself: the limit of 2 windows "
+                                 "of one run was reached; start it again to go on" % session)
+    assert "stopping: the limit of 2 windows of one run was reached" in (session / "session.log").read_text()
+
+
+def test_run_of_a_given_number_of_windows_ends_without_a_reason(run_of_windows):
+    result, session = run_of_windows("--count", "2")
+    assert result["message"] == "Captured 2 window(s) into %s" % session
+    assert "stopping" not in (session / "session.log").read_text()
+
+
+# ---------------------------------------------------------------- the Tcl script of the session
+def test_older_tcl_script_is_named_in_the_answer(vivado, reachable, ltx, tmp_path, capsys):
+    # every proc is there, so only the number shows that the script is from an earlier release
+    vivado.script = "version=%d;missing=" % (ic.SCRIPT_VERSION - 1)
+    ib.cmd_capture(job("capture", "--name", "c", "--ltx", ltx, "--out", str(tmp_path / "out")))
+    said = "The Tcl script %s is older than this program (it is version %d, this program expects %d): Update" % (
+        ic.resolve_tcl(None), ic.SCRIPT_VERSION - 1, ic.SCRIPT_VERSION)
+    assert said in result_of(capsys)["message"]
+
+
+@pytest.mark.parametrize("script", ["version=%d;missing=" % ic.SCRIPT_VERSION, "version=0;missing=", ""])
+def test_tcl_script_of_this_release_or_of_ones_own_gets_no_note(vivado, reachable, ltx, tmp_path, capsys, script):
+    # 0 is what a script answers that states no version, and nothing what one answers that cannot be asked
+    vivado.script = script
+    ib.cmd_capture(job("capture", "--name", "c", "--ltx", ltx, "--out", str(tmp_path / "out")))
+    result = result_of(capsys)
+    assert result["message"] == "Capture saved: " + result["csvPath"]

@@ -3,6 +3,7 @@
 
 """Finding what a session starts: Vivado, which need not be where the profile says, and the Tcl script."""
 import os
+import re
 
 import pytest
 
@@ -66,6 +67,13 @@ def test_script_shipped_with_the_driver_is_in_scripts():
     path = ic.resolve_tcl(None)
     assert path == os.path.join(ic.HERE, "scripts", "vivado_ila_repl.tcl")
     assert os.path.isfile(path)
+
+
+def test_script_shipped_with_the_driver_has_the_version_the_driver_expects():
+    # the two numbers are counted up together. Read from the text of the script, which needs no Tcl interpreter
+    with open(ic.resolve_tcl(None), encoding="utf-8") as f:
+        numbers = re.findall(r"^set ::ILA_REPL_VERSION (\d+)$", f.read(), re.M)
+    assert numbers == [str(ic.SCRIPT_VERSION)]
 
 
 def test_missing_script_is_reported_with_where_it_should_be(monkeypatch, tmp_path):

@@ -64,10 +64,16 @@ UPLOAD = "Sample in Buffer,Sample in Window,TRIGGER,top/u1/rx_valid,top/u1/data[
 
 
 class Sent(list):
-    """The Tcl commands the driver sent, in order. answers: what is answered, by the first word of a command."""
+    """The Tcl commands the driver sent, in order. answers: what is answered, by the first word of a command.
+    failing: the commands that fail instead, by their first word, with the reason the Tcl side gives. script:
+    what the Tcl script says about itself when the driver asks (its version and what it lacks). started: the
+    command line of every process the driver would have started, by the name it gave it."""
     def __init__(self):
         list.__init__(self)
         self.answers = dict(ANSWERS)
+        self.failing = {}
+        self.script = "version=%d;missing=" % ila_capture.SCRIPT_VERSION
+        self.started = {}
 
 
 @pytest.fixture
@@ -79,6 +85,7 @@ def vivado(monkeypatch, tmp_path):
     class Recorder:
         def __init__(self, argv, name, log):
             self.name, self.dead, self.writing = name, False, None
+            sent.started[name] = list(argv)
             self.p = types.SimpleNamespace(pid=0, poll=lambda: None)
 
         def cmd(self, tcl, timeout=600, check=True):
@@ -86,6 +93,8 @@ def vivado(monkeypatch, tmp_path):
                 raise RuntimeError("the recorder was sent more than 1000 commands")
             sent.append(tcl)
             word = tcl.split(" ")[0]
+            if word in sent.failing:
+                raise RuntimeError("%s: '%s' failed: %s" % (self.name, tcl, sent.failing[word]))
             if word == "ila_collect_rearm":
                 # An upload takes time. "watch" divides by the time a window took, and the clock it reads is
                 # coarse on Windows before Python 3.13 (about 16 ms): answered at once, a window would take none.
@@ -95,7 +104,7 @@ def vivado(monkeypatch, tmp_path):
                 with open(prefix + ".csv", "wb") as f:
                     f.write(UPLOAD.encode("ascii"))
             if tcl.startswith("set ::ILA_CHECK"):          # the question about the script's version
-                return "version=3;missing="
+                return sent.script
             return "0" if tcl == "set ::ILA_INDEX" else sent.answers.get(word, "")
 
         def settle(self, timeout=660):
