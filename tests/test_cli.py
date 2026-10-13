@@ -491,6 +491,20 @@ def test_bridge_answers_with_one_json_document(app, write):
     assert json.loads(done.stdout) == {"cores": [], "probes": [], "hubClockHz": 0, "maxSafeTckHz": 0}
 
 
+def test_bridge_reads_a_probe_file_in_the_json_form(app, write):
+    # the form newer Vivado versions write; the bridge reads it with the driver, which it finds next to itself
+    text = json.dumps({"ltx_root": {"ltx_data": [{"debug_cores": [
+        {"type": "XSDB_V3", "name": "dbg_hub", "clk_input_freq_hz": "100000000"},
+        {"type": "ILA_V3", "name": "u_ila_0", "pins": [{"portIndex": 0, "nets": [{"name": "top/rx_valid"}]}]}]}]}})
+    done = run(app, "ila_bridge.py", "parse-ltx", "--ltx", write("top.ltx", text))
+    assert json.loads(done.stdout) == {
+        "cores": [{"name": "u_ila_0", "cell": "u_ila_0", "depth": 0}],
+        "probes": [{"name": "rx_valid", "fullName": "top/rx_valid", "width": 1, "isBus": False, "core": "u_ila_0",
+                    "port": 0}],
+        "hubClockHz": 100000000, "maxSafeTckHz": 40000000}
+    assert done.stderr == ""
+
+
 def test_demo_capture_is_written_next_to_the_scripts_and_can_be_parsed(app):
     made = json.loads(run(app, "ila_bridge.py", "demo-capture", "--samples", "64").stdout)
     assert made["status"] == "ok"

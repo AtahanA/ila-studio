@@ -214,7 +214,7 @@ SCRIPT_NEEDS = ("ila_recheck", "ila_probe_radix", "ila_capture_keep", "ila_write
 # The ::ILA_REPL_VERSION of the script this driver was written against. A proc that is there but behaves as it
 # did in an earlier release does not show in the list above; a lower number does. The two are counted up
 # together. A script that states no number (one's own) answers 0: unknown, which is not the same as older.
-SCRIPT_VERSION = 3
+SCRIPT_VERSION = 4
 SCRIPT_CHECK = ("set ::ILA_CHECK {}; foreach p {" + " ".join(SCRIPT_NEEDS) + "} "
                 "{ if {[llength [info procs $p]] == 0} { lappend ::ILA_CHECK $p } }; "
                 "if {![info exists ::JTAG_LEAVE]} { lappend ::ILA_CHECK ::JTAG_LEAVE }; "
@@ -1285,6 +1285,60 @@ def sx(x):
 HALT_RE = re.compile(r"Stopped.* 0x([0-9a-f]{8,16})$")
 
 
+# ---------------------------------------------------------------- probe file in the JSON form
+# Vivado writes a probe file (.ltx) as XML or, in newer versions, as JSON:
+#   { "ltx_root": { "version": 4, "ltx_data": [ { "name": ..., "debug_cores": [ <core>, ... ] } ] } }
+# A core is an object with "type", "name" (its cell) and "spec". The debug hub is one of them and carries
+# "clk_input_freq_hz", written as text. An ILA or a VIO has "pins", one for each probe port: "portIndex",
+# "leftIndex" / "rightIndex" and the "nets" on it, and a net that is a bus lists its bits as "subnets".
+# These names are the ones of the JSON probe files in AMD's public chipscopy examples. So that a file which
+# differs in something else is still read, only these keys are looked at and each is taken for what it is: a
+# key that is not known is passed over, one that is missing or of another type leaves out what it would have
+# said (a hub clock nobody names is 0, unknown), and nothing but a file without "ltx_root" is refused.
+def ltx_json(doc):
+    """The debug cores of a probe file in the JSON form and its debug hub clock, from the parsed document:
+    ([{"kind": "ila" | "vio" | "", "name": <cell name>, "ports": [{"port": <number of the probe port>,
+    "width": <bits, 0 when the file does not say>, "nets": [<net name of every bit, as listed>]}]}],
+    <the slowest hub clock in Hz, 0 when none is named>). A port is one net of a pin: a bus with its bits.
+    ValueError for a document without "ltx_root": JSON, but no probe file."""
+    root = doc.get("ltx_root") if isinstance(doc, dict) else None
+    if not isinstance(root, dict):
+        raise ValueError('the file is JSON, but it has no "ltx_root": it is not a Vivado probe file')
+    listed = lambda x: [item for item in x if isinstance(item, dict)] if isinstance(x, list) else []
+    number = lambda x: x if isinstance(x, int) and not isinstance(x, bool) else None
+    text = lambda x: x.strip() if isinstance(x, str) else ""
+
+    def span(at):
+        """bits between "leftIndex" and "rightIndex" of a pin or a net; 0 when it does not state both"""
+        left, right = number(at.get("leftIndex")), number(at.get("rightIndex"))
+        return 0 if left is None or right is None else abs(left - right) + 1
+
+    cores, hub_hz = [], 0
+    # "debug_cores" of every probe set in "ltx_data" - and of "ltx_root" itself, should a file keep them there
+    for found in [c for part in [root] + listed(root.get("ltx_data")) for c in listed(part.get("debug_cores"))]:
+        hz = found.get("clk_input_freq_hz")
+        hz = int(hz) if re.fullmatch(r"[0-9]{1,18}", text(hz)) else number(hz) or 0
+        if hz > 0 and (hub_hz == 0 or hz < hub_hz):
+            hub_hz = hz
+        said = " ".join(text(found.get(key)) for key in ("type", "spec", "ipName")).lower()
+        kind = next((k for k in ("ila", "vio") if re.search(r"(?<![a-z])%s(?![a-z])" % k, said)), "")
+        pins = listed(found.get("pins"))
+        if not said.strip() and pins:
+            kind = "ila"                         # probes of a core that states no type: as in the XML form
+        ports = []
+        for pin in pins:
+            nets = listed(pin.get("nets"))
+            for net in nets:
+                bits = [text(bit.get("name")) for bit in listed(net.get("subnets"))]
+                bits = [bit for bit in bits if bit] or [name for name in [text(net.get("name"))] if name]
+                # the width as the net states it, else as its pin does - which is the width of the net only
+                # when it is the one net of the pin
+                width = span(net) or (span(pin) if len(nets) == 1 else 0)
+                ports.append({"port": number(pin.get("portIndex")) or 0, "width": width, "nets": bits})
+        cores.append({"kind": kind, "name": text(found.get("name")), "ports": ports})
+    return cores, hub_hz
+
+
 # ---------------------------------------------------------------- commands
 def cmd_check(args, prof):
     """Validate a profile offline: the mistakes it catches would otherwise surface minutes later, after
@@ -1309,10 +1363,17 @@ def cmd_check(args, prof):
         problems.append(f"hardware.ltx not found: {hw['ltx']}")
     else:
         try:
-            txt = open(hw["ltx"], encoding="utf-8", errors="replace").read()
-            notes.append(f"hardware.ltx: {txt.count('<probe ')} probe entries, "
-                         f"{re.search(r'HUB_CLK_INPUT_FREQ_HZ. value=.([0-9]+)', txt).group(1)} Hz hub clock"
-                         if "HUB_CLK_INPUT_FREQ_HZ" in txt else f"hardware.ltx: {txt.count('<probe ')} probe entries")
+            txt = open(hw["ltx"], encoding="utf-8-sig", errors="replace").read()
+            if txt.lstrip()[:1] == "{":
+                # the JSON form (the XML form starts with "<"): every probe port of every core, and the hub
+                cores, hub_hz = ltx_json(json.loads(txt))
+                notes.append(f"hardware.ltx: {sum(len(c['ports']) for c in cores)} probe entries"
+                             + (f", {hub_hz} Hz hub clock" if hub_hz else ""))
+            else:
+                notes.append(f"hardware.ltx: {txt.count('<probe ')} probe entries, "
+                             f"{re.search(r'HUB_CLK_INPUT_FREQ_HZ. value=.([0-9]+)', txt).group(1)} Hz hub clock"
+                             if "HUB_CLK_INPUT_FREQ_HZ" in txt else
+                             f"hardware.ltx: {txt.count('<probe ')} probe entries")
         except Exception as e:
             notes.append(f"hardware.ltx could not be parsed ({e}) - it is still passed to Vivado as is")
     try:

@@ -88,9 +88,9 @@ Python, not Vivado.
 
 1. Make sure hw_server runs where the JTAG cable is attached, and that the bitstream with the ILA is loaded.
 2. Under **Vivado Probe File (.ltx)** click **Browse** and pick the probe file of that bitstream. The probes
-   appear in the list on the right. If the status line says `Failed to parse LTX` instead, the file is in a
-   form that is not read here (see [Known limitations](#known-limitations)): leave the path in the field and
-   go on - **Connect** reads the cores and probes from the device.
+   appear in the list on the right. Both forms in which Vivado writes the file are read: XML, and the JSON of
+   newer versions. If the status line says `Failed to parse LTX` instead, the file is not a probe file (see
+   [Troubleshooting](#troubleshooting)).
 3. Enter the address under **hw_server URL**: `127.0.0.1:3121` for this PC, otherwise `<host>:3121`. Leave
    **Device Filter** at `*` and **JTAG Clock (TCK)** at `Auto`.
 4. Click **Connect** (bottom right). Vivado starts, which takes tens of seconds, and the cores, their depth
@@ -268,11 +268,12 @@ GUI (React)  --invoke-->  Rust (async commands, never on the UI thread)
 |---|---|---|
 | `Python 3 was not found. Install Python 3.8 or newer, or set the ILA_PYTHON environment variable to the full path of python.exe.` | No Python 3.8+ on `PATH`. At start it shows as "Could not read the profiles: ...". | Install Python; the next action looks for it again. If it is still not found, restart the application: a running program does not see a `PATH` that an installer has changed. Or set `ILA_PYTHON` before starting the application. |
 | `Vivado not found (tools.vivado is ...)` | Vivado is in none of the places that are searched. | Any one of these: put Vivado's `bin` folder on `PATH`; set `XILINX_VIVADO` to the installation folder; install under `Xilinx\Vivado` on `C:`, `D:` or `E:`; write the full path of `vivado.bat` as `tools.vivado` into a profile. |
-| `Failed to parse LTX: not well-formed (invalid token): line 1, column 0` | The probe file is in the JSON form (it begins with `{ "ltx_root"`); only the XML form, as Vivado 2017.4 writes it, is read without Vivado. | Leave the path in the field and click **Connect**, which reads the cores and probes from the device. If the core then stays IDLE, set the JTAG clock by hand (hub clock / 2.5 or lower). |
+| `Failed to parse LTX: ...` | The file is not a probe file as Vivado writes one: neither the XML form nor the JSON form (which begins with `{ "ltx_root"`). What follows the colon says where reading it ended. | Pick the `.ltx` that the implementation run wrote for the bitstream on the board. |
+| `the probe file does not name the debug hub clock, so TCK (...) was not limited to hub clock / 2.5`, in the message of a connect or a capture | With the JTAG clock on `Auto`: the probe file has no entry for the clock of the debug hub, so there was nothing to hold the cable's own frequency against. | Nothing, while the captures work. If the core stays IDLE, choose a JTAG clock at or below hub clock / 2.5 yourself. |
 | `ila_bridge.py was not found in ...` | The executable was copied without the scripts. | Keep `ila-studio.exe` in the folder that `make_distribute.ps1` made. |
 | `hw_server at ... is not reachable` | Wrong address, network, cable off. | Checked in 3 s before Vivado is started. Check the address and the cable. |
 | `[Common 17-70] Application Exception: bad enum default`, then no hardware targets | The cable runs at a TCK frequency Vivado cannot represent (a SmartLynq asked for 6 MHz reports 6034482 Hz), left behind by an earlier session while another client (e.g. an SDK debug session) kept the cable open. | Detected and repaired automatically (xsdb puts the cable back to 10 MHz, then the connect is retried). Every session also restores the cable's frequency when it ends. Seen in ANOTHER Vivado while ILA Studio is connected: click Disconnect here first. |
-| `the ILA core does not run: it is still IDLE after being armed` | TCK too fast for the debug hub clock, or the ILA clock is stopped. In a session that has been open for a while: another program has changed the cable's JTAG clock. | Use `Auto` (or a frequency at or below hub clock / 2.5). A kept session reconnects by itself and tries the capture once more; otherwise Disconnect and Connect. |
+| `the ILA core does not run: it is still IDLE after being armed` | TCK too fast for the debug hub clock, or the ILA clock is stopped. In a session that has been open for a while: another program has changed the cable's JTAG clock. | Use `Auto` (or a frequency at or below hub clock / 2.5). Where the message says that the probe file does not name the hub clock, `Auto` has nothing to go by: choose the frequency yourself. A kept session reconnects by itself and tries the capture once more; otherwise Disconnect and Connect. |
 | `no ILA core found on ...: Vivado sees the device but no debug hub in it` | The FPGA is not configured yet (right after power-up), its debug hub clock is not running, or the bitstream has no ILA / the `.ltx` belongs to another build. | Wait for the board to boot, load the matching bitstream / pick the matching `.ltx`. |
 | `the JTAG chain is empty` | The cable answers but sees no device. | Power the board. |
 | `probe X is not a probe of the selected ILA core (...): it belongs to core N ...` | The trigger names a probe of another ILA core of the design. | Select that core (chips under "Detected ILA Cores"), or choose a trigger probe of the selected core. |
@@ -283,10 +284,12 @@ GUI (React)  --invoke-->  Rust (async commands, never on the UI thread)
 
 - Windows only. The code has paths for Linux, but they have never been run.
 - Tested with one Vivado version, one device family and one kind of cable (see [Status](#status)).
-- A probe file in the JSON form that Vivado can also write (it begins with `{ "ltx_root"`) is not read by
-  **Browse** / **Parse File** (`Failed to parse LTX`); only the XML form of Vivado 2017.4 is. The debug hub
-  clock of such a file is not read either, so `Auto` does not lower the JTAG clock for that design: choose a
-  frequency at or below hub clock / 2.5 yourself. **Connect** still lists the cores and probes.
+- A probe file in the JSON form that newer Vivado versions write (it begins with `{ "ltx_root"`) is read as
+  the JSON probe files of AMD's public chipscopy examples are laid out: no such file written by a Vivado of
+  our own, and no board with such a design, was at hand to try it with. If **Browse** / **Parse File** show
+  no probes or wrong ones for your file, **Connect** still lists the cores and probes of the device. If the
+  message of **Connect** says `the probe file does not name the debug hub clock`, `Auto` has not lowered
+  the JTAG clock: if the core then stays IDLE, choose a frequency at or below hub clock / 2.5 yourself.
 - The search for a Vivado in the folder order of newer installers (`Xilinx\<version>\Vivado`) is written from
   the layout of such an installation and has not been run against one.
 - The last changes before this release (how addresses, paths and triggers are written into the Tcl commands

@@ -27,7 +27,7 @@ set ::STOP_FILE ""
 set ::PROBE_RADIX {}
 # Counted up whenever the driver (ila_capture.py) needs something new from this script; the driver asks for it
 # and for the procs it uses when it starts Vivado, and says so when the script is older than itself.
-set ::ILA_REPL_VERSION 3
+set ::ILA_REPL_VERSION 4
 
 proc say {msg} { puts "\[ILA_REPL\] $msg" }
 
@@ -52,7 +52,8 @@ proc ila_open {url ltx {device_filter *} {ila_index 0} {target_filter *} {freq_h
 
     set tck_txt [expr {$freq_hz > 0 ? "$freq_hz Hz" : "auto"}]
     say "ila_open url=$url device=$device_filter ila_index=$ila_index target=$target_filter tck=$tck_txt"
-    say "probe file: $ltx (debug hub clock $::HUB_CLK_HZ Hz)"
+    set hub_txt [expr {$::HUB_CLK_HZ > 0 ? "debug hub clock $::HUB_CLK_HZ Hz" : "it does not name the debug hub clock"}]
+    say "probe file: $ltx ($hub_txt)"
     if {$ltx ne "" && ![file exists $ltx]} { error "probe file not found: $ltx" }
 
     if {[info commands open_hw_manager] ne ""} { open_hw_manager } else { open_hw }
@@ -75,15 +76,23 @@ proc ila_open {url ltx {device_filter *} {ila_index 0} {target_filter *} {freq_h
     return [ila_info]
 }
 
-# Slowest debug-hub clock named in the probe file, 0 when the file does not say.
+# Slowest debug-hub clock named in the probe file, 0 when the file does not say. Vivado writes the file as XML
+# or, in newer versions, as JSON: the XML form names the clock as an option of every probe, the JSON form as a
+# key of the debug hub, its value written as text (a bare whole number is taken as well). Both are read with a
+# pattern: the Tcl inside Vivado 2017.4 is 8.5, which has no json package.
 proc ltx_hub_clock_hz {ltx} {
     set hz 0
     catch {
         set f [open $ltx r]
         set txt [read $f]
         close $f
-        foreach {m v} [regexp -all -inline {HUB_CLK_INPUT_FREQ_HZ"\s+value="([0-9]+)"} $txt] {
-            if {$v > 0 && ($hz == 0 || $v < $hz)} { set hz $v }
+        set xml {HUB_CLK_INPUT_FREQ_HZ"\s+value="([0-9]+)"}
+        set json {"clk_input_freq_hz"\s*:\s*"?([0-9]+)"?\s*[,\}]}
+        foreach pat [list $xml $json] {
+            foreach {m v} [regexp -all -inline $pat $txt] {
+                set v [string trimleft $v 0]               ;# a number with a leading zero is no octal number
+                if {$v ne "" && ($hz == 0 || $v < $hz)} { set hz $v }
+            }
         }
     }
     return $hz
@@ -289,6 +298,8 @@ proc ila_pick_device {device_filter ltx} {
 #    40 MHz hub clock one was stable at 20 MHz (2.0) and corrupt at 30 MHz (1.3) - so it is only ENFORCED when no
 #    frequency was asked for (hz 0: the cable default is lowered if it breaks the rule). A frequency asked for
 #    explicitly is used as given, with a note when it is above the rule. The hub clock is read from the .ltx.
+#    A probe file that does not name it leaves nothing to check against: automatic then keeps the cable's
+#    frequency whatever the hub can follow, and ::JTAG_NOTE says that this was not looked at.
 # Returns the frequency the target will open with; ::JTAG_NOTE says why it differs from the request.
 proc jtag_set_freq {hz} {
     set ::JTAG_NOTE ""
@@ -323,6 +334,10 @@ proc jtag_set_freq {hz} {
     if {$hz > 0 && $::JTAG_MAX_SAFE > 0 && $pick > $::JTAG_MAX_SAFE} {
         if {$::JTAG_NOTE ne ""} { append ::JTAG_NOTE ". " }
         append ::JTAG_NOTE "TCK $pick Hz is above debug hub clock / 2.5 ($::JTAG_MAX_SAFE Hz) - if the core stays IDLE or the readback is corrupt, lower it or use automatic"
+    }
+    if {$hz <= 0 && $::HUB_CLK_HZ <= 0} {
+        if {$::JTAG_NOTE ne ""} { append ::JTAG_NOTE ". " }
+        append ::JTAG_NOTE "the probe file does not name the debug hub clock, so TCK ($pick Hz) was not limited to hub clock / 2.5"
     }
     if {$pick == $cur} { return $cur }
     catch { close_hw_target }
@@ -639,7 +654,10 @@ proc ila_capture_keep {{trig now} {pos 1000} {timeout 1} {radix UNSIGNED} {captu
         catch { reset_hw_ila $ila }
         if {$st eq "STOPPED"} { error "stopped by user before the ILA triggered" }
         if {[string toupper $st] eq "IDLE"} {
-            error "the ILA core does not run: it is still IDLE after being armed. TCK ([jtag_freq] Hz) is too fast for the debug hub clock ($::HUB_CLK_HZ Hz), or the ILA/hub clock is stopped"
+            if {$::HUB_CLK_HZ > 0} {
+                error "the ILA core does not run: it is still IDLE after being armed. TCK ([jtag_freq] Hz) is too fast for the debug hub clock ($::HUB_CLK_HZ Hz), or the ILA/hub clock is stopped"
+            }
+            error "the ILA core does not run: it is still IDLE after being armed. TCK ([jtag_freq] Hz) is too fast for the debug hub clock - which the probe file does not name: choose a JTAG clock at or below hub clock / 2.5 - or the ILA/hub clock is stopped"
         }
         if {$armed} { error "not triggered within $timeout min (core status $st): the condition {$trig} did not occur" }
         error "the ILA buffer did not fill within $timeout min (core status $st): is the ILA clock running?"

@@ -78,8 +78,9 @@ The card "Hardware & ILA Core Input".
 - **Vivado Probe File (.ltx)**: **Browse** picks the file and reads it at once; **Parse File** reads the path
   that was typed. The file is read directly, without Vivado: all ILA cores, the hierarchical signal names, bit
   widths and port numbers. VIO probes are left out. The capture depth of a core is not in the probe file; it
-  is shown after **Connect**. Only the XML form that Vivado 2017.4 writes is read; the JSON form (a file that
-  begins with `{ "ltx_root"`) is refused with "Failed to parse LTX", and **Connect** then lists the probes.
+  is shown after **Connect**. Both forms of the file are read: the XML form that Vivado 2017.4 writes and the
+  JSON form of newer versions (a file that begins with `{ "ltx_root"`). A file that is neither is refused with
+  "Failed to parse LTX".
 - **Vivado Tcl Script (.tcl)**: leave it empty to use the bundled `scripts\vivado_ila_repl.tcl`. A script
   named here is run by Vivado, so name only a script you trust. A path that does not exist ends the job with
   `Tcl script not found: <path>`; the bundled script is not run in its place.
@@ -91,8 +92,10 @@ The card "Hardware & ILA Core Input".
 - **JTAG Clock (TCK)**: one list and one field. `Auto` keeps the cable's own frequency and lowers it only when
   the debug hub of the design cannot follow: TCK must stay at or below debug hub clock / 2.5 (for example, a
   hub clock of 25 MHz allows 10 MHz at most). The hub clock is read from the probe file, and the line below the
-  list shows the limit. A preset or a frequency typed in MHz is used as given, snapped down to a value the cable
-  offers. The list marks the fastest preset inside the rule (★) and the presets above it ("too fast").
+  list shows the limit. A probe file that does not name the hub clock leaves `Auto` nothing to go by: the
+  cable's frequency is kept, and the message of **Connect** and of every capture says `the probe file does
+  not name the debug hub clock`. A preset or a frequency typed in MHz is used as given, snapped down to a value
+  the cable offers. The list marks the fastest preset inside the rule (★) and the presets above it ("too fast").
 - **Detected ILA Cores**: one chip for each core, with its position, name, number of probes and depth.
 - **Connect** (bottom right) connects to hw_server and reads the ILA cores, their depth and the probes from the
   FPGA itself. See [The hardware session](#the-hardware-session).

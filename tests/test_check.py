@@ -2,6 +2,7 @@
 # Copyright (C) 2026 Atahan Aggunlu
 
 """The "check" command: a profile is judged offline, and by the rules a real run goes by."""
+import json
 import os
 import types
 
@@ -37,6 +38,28 @@ def test_usable_profile_passes(prof, capsys):
     code, out = check(prof, capsys)
     assert code == 0 and "PROBLEM" not in out and out.rstrip().endswith("OK")
     assert "hardware.ltx: 1 probe entries, 100000000 Hz hub clock" in out
+
+
+@pytest.mark.parametrize("hub, said", [
+    ({"clk_input_freq_hz": "100000000"}, "hardware.ltx: 2 probe entries, 100000000 Hz hub clock"),
+    ({}, "hardware.ltx: 2 probe entries"),               # a hub that does not name its clock: nothing is made up
+])
+def test_probe_file_in_the_json_form_is_counted_as_well(prof, capsys, write, hub, said):
+    cores = [dict({"type": "XSDB_V3", "name": "dbg_hub"}, **hub),
+             {"type": "ILA_V3", "name": "u_ila_0", "pins": [
+                 {"portIndex": 0, "nets": [{"name": "top/rx_valid"}]},
+                 {"portIndex": 1, "nets": [{"name": "top/data", "subnets": [{"name": "top/data[1]"},
+                                                                            {"name": "top/data[0]"}]}]}]}]
+    prof["hardware"]["ltx"] = write("top.ltx", json.dumps({"ltx_root": {"ltx_data": [{"debug_cores": cores}]}}))
+    code, out = check(prof, capsys)
+    assert code == 0 and "note:    %s\n" % said in out
+
+
+def test_json_that_is_no_probe_file_is_noted_and_left_to_vivado(prof, capsys, write):
+    prof["hardware"]["ltx"] = write("top.ltx", '{"probes": []}')
+    code, out = check(prof, capsys)
+    assert code == 0
+    assert 'note:    hardware.ltx could not be parsed (the file is JSON, but it has no "ltx_root"' in out
 
 
 def test_vivado_is_looked_for_the_way_a_run_does(prof, capsys, tmp_path):

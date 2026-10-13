@@ -100,12 +100,54 @@ def emit(tag, obj):
 NET_INDEX_RE = re.compile(r"\[(\d+)\]$")
 
 
+def ltx_probe(nets, width, core, port):
+    """One probe of the list, from the nets of its probe port in the order of the file - one net for each bit -
+    and the width the file states for it (0: it does not)."""
+    width = max(width, len(nets))
+    base = NET_INDEX_RE.sub("", nets[0])
+    if width > 1:
+        idx = [int(m.group(1)) for m in (NET_INDEX_RE.search(n) for n in nets) if m]
+        hi, lo = (max(idx), min(idx)) if len(idx) == len(nets) else (width - 1, 0)
+        full = f"{base}[{hi}:{lo}]"                        # the name Vivado uses as the CSV column header
+    else:
+        base, full = nets[0], nets[0]
+    return {"name": base.split("/")[-1], "fullName": full, "width": width, "isBus": width > 1,
+            "core": core, "port": port}
+
+
+def ltx_is_json(ltx_path):
+    """Whether a probe file is in the JSON form: its first character that is not blank is "{" (the XML form
+    starts with "<")."""
+    with open(ltx_path, "rb") as f:
+        return f.read(4096).lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"{")
+
+
+def parse_ltx_json(ltx_path):
+    """parse_ltx_file for a probe file in the JSON form, which the driver knows how to read (see ltx_json
+    there; it is imported for this form only): the same dictionary as for the XML form, from the same rules for
+    the name of a probe."""
+    with open(ltx_path, encoding="utf-8-sig") as f:
+        found, hub_hz = driver().ltx_json(json.load(f))
+    cores, probes = {}, []
+    for c in found:
+        if c["kind"] != "ila":
+            continue                                       # the debug hub; VIO probes, as in the XML form
+        core = c["name"] or "hw_ila_1"
+        cores.setdefault(core, {"name": core, "cell": c["name"], "depth": 0})
+        probes += [ltx_probe(p["nets"], p["width"], core, p["port"]) for p in c["ports"] if p["nets"]]
+    return {"cores": list(cores.values()), "probes": probes, "hubClockHz": hub_hz,
+            "maxSafeTckHz": int(hub_hz / 2.5) if hub_hz else 0}
+
+
 def parse_ltx_file(ltx_path):
     """Cores and probes of a Vivado .ltx probe file, plus the debug hub clock, which bounds the JTAG clock:
-    TCK has to stay below hub clock / 2.5 or the core cannot be driven."""
+    TCK has to stay below hub clock / 2.5 or the core cannot be driven. Vivado writes the file as XML or as
+    JSON, by its version; both are read."""
     if not ltx_path or not os.path.exists(ltx_path):
         return {"error": f"LTX file not found: {ltx_path}", "cores": [], "probes": []}
     try:
+        if ltx_is_json(ltx_path):
+            return parse_ltx_json(ltx_path)
         root = ET.parse(ltx_path).getroot()
     except Exception as e:
         return {"error": f"Failed to parse LTX: {e}", "cores": [], "probes": []}
@@ -136,16 +178,7 @@ def parse_ltx_file(ltx_path):
             width = int(opt.get("PROBE_PORT_BIT_COUNT") or 0)
         except ValueError:
             width = 0
-        width = max(width, len(nets))
-        base = NET_INDEX_RE.sub("", nets[0])
-        if width > 1:
-            idx = [int(m.group(1)) for m in (NET_INDEX_RE.search(n) for n in nets) if m]
-            hi, lo = (max(idx), min(idx)) if len(idx) == len(nets) else (width - 1, 0)
-            full = f"{base}[{hi}:{lo}]"                    # the name Vivado uses as the CSV column header
-        else:
-            base, full = nets[0], nets[0]
-        probes.append({"name": base.split("/")[-1], "fullName": full, "width": width, "isBus": width > 1,
-                       "core": core, "port": port})
+        probes.append(ltx_probe(nets, width, core, port))
     return {"cores": list(cores.values()), "probes": probes, "hubClockHz": hub_hz,
             "maxSafeTckHz": int(hub_hz / 2.5) if hub_hz else 0}
 
