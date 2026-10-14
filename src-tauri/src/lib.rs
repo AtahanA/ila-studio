@@ -769,26 +769,29 @@ struct HwArgs {
 }
 
 fn push_hw_args(args: &mut Vec<String>, hw: HwArgs) {
-    let mut opt = |flag: &str, value: Option<String>| {
-        if let Some(v) = value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
+    // `empty_too`: the option is sent although its value is empty
+    let mut put = |flag: &str, value: Option<String>, empty_too: bool| {
+        if let Some(v) = value.map(|v| v.trim().to_string()).filter(|v| empty_too || !v.is_empty()) {
             args.push(flag.to_string());
             args.push(v);
         }
     };
-    opt("--profile", hw.profile);
-    opt("--ltx", hw.ltx);
-    opt("--tcl", hw.tcl);
-    opt("--server", hw.server);
-    opt("--device", hw.device);
-    opt("--ila-index", hw.ila_index.map(|i| i.to_string()));
+    put("--profile", hw.profile, false);
+    put("--ltx", hw.ltx, false);
+    // The Tcl script is sent as the field has it, empty too: an emptied field asks for the bundled script,
+    // whatever the selected profile names. (A job that does not say at all gets the script of its profile.)
+    put("--tcl", hw.tcl, true);
+    put("--server", hw.server, false);
+    put("--device", hw.device, false);
+    put("--ila-index", hw.ila_index.map(|i| i.to_string()), false);
     // the core by name: its position in the device's list need not be its position in the probe file
-    opt("--ila-cell", hw.ila_cell);
+    put("--ila-cell", hw.ila_cell, false);
     // 0 = automatic: the cable default, lowered when it is too fast for the design's debug hub. It is always
     // sent, so that the choice made in the UI wins over a frequency stored in the profile.
     let hz = if hw.omit_jtag_freq == Some(true) { 0 } else { hw.jtag_hz.unwrap_or(0) };
-    opt("--jtag-hz", Some(hz.to_string()));
+    put("--jtag-hz", Some(hz.to_string()), false);
     // always sent as well: the session then has as many Vivado engines as the box in the UI says
-    opt("--engines", Some(hw.engines.unwrap_or(1).clamp(1, 3).to_string()));
+    put("--engines", Some(hw.engines.unwrap_or(1).clamp(1, 3).to_string()), false);
 }
 
 /// A name as a file name can carry it: letters, digits, "_", "-" and "." of ASCII, anything else as "_".
@@ -1853,7 +1856,7 @@ mod tests {
         let args = pushed(HwArgs {
             profile: Some(" profiles/example-board.json ".to_string()),
             ltx: Some("top.ltx".to_string()),
-            tcl: Some(String::new()),
+            tcl: None,
             server: Some("localhost:3121".to_string()),
             device: Some("   ".to_string()),
             ila_index: Some(2),
@@ -1869,6 +1872,18 @@ mod tests {
                 "--ila-index", "2", "--ila-cell", "u_ila_demo", "--jtag-hz", "6000000", "--engines", "2",
             ]
         );
+    }
+
+    #[test]
+    fn push_hw_args_sends_an_emptied_tcl_script_field_as_it_is() {
+        // Empty is an answer of its own: the bundled script, although the profile may name another. Left out,
+        // the bridge would take the script of the profile - which is what "not said" means, and stays so.
+        let emptied = pushed(HwArgs { ltx: Some("top.ltx".to_string()), tcl: Some("  ".to_string()), ..no_hw_args() });
+        assert_eq!(emptied, ["capture", "--ltx", "top.ltx", "--tcl", "", "--jtag-hz", "0", "--engines", "1"]);
+        let named = pushed(HwArgs { tcl: Some(" scripts/my_repl.tcl ".to_string()), ..no_hw_args() });
+        assert_eq!(named, ["capture", "--tcl", "scripts/my_repl.tcl", "--jtag-hz", "0", "--engines", "1"]);
+        let not_said = pushed(HwArgs { tcl: None, ..no_hw_args() });
+        assert_eq!(not_said, ["capture", "--jtag-hz", "0", "--engines", "1"]);
     }
 
     #[test]

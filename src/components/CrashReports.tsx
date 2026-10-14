@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Atahan Aggunlu
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { Bug } from "lucide-react";
 import { sendTestReport, setCrashReports, useCrashReports } from "../crashReports";
+import { useDismiss } from "../dismiss";
 
 type TestResult = { state: "sending" } | { state: "sent"; id: string } | { state: "failed"; why: string };
 
@@ -16,27 +17,12 @@ export const CrashReports: React.FC = () => {
   const { available, enabled, server, ownServer, unencrypted } = useCrashReports();
   const [open, setOpen] = useState(false);
   const [test, setTest] = useState<TestResult | null>(null);
+  /** why the box could not be switched, if it could not */
+  const [switchError, setSwitchError] = useState("");
   const rootRef = useRef<HTMLSpanElement | null>(null);
 
   // closes on a click elsewhere and on Escape, as the Import menu does
-  useEffect(() => {
-    if (!open) return;
-    const outside = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        e.stopPropagation();
-      }
-    };
-    const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("pointerdown", outside, true);
-    window.addEventListener("keydown", key);
-    return () => {
-      window.removeEventListener("pointerdown", outside, true);
-      window.removeEventListener("keydown", key);
-    };
-  }, [open]);
+  useDismiss(open, rootRef, () => setOpen(false));
 
   const sendTest = async () => {
     setTest({ state: "sending" });
@@ -54,6 +40,7 @@ export const CrashReports: React.FC = () => {
         onClick={() => setOpen((o) => !o)}
         title="Crash reports"
         aria-label="Crash reports"
+        aria-haspopup="true"
         aria-expanded={open}
       >
         <Bug size={16} />
@@ -67,11 +54,14 @@ export const CrashReports: React.FC = () => {
               disabled={!available}
               onChange={(e) => {
                 setTest(null);
-                setCrashReports(e.target.checked).catch(console.error);
+                setSwitchError("");
+                // said in the panel: a release build has no console, and the box would simply not move
+                setCrashReports(e.target.checked).catch((why) => setSwitchError(`The switch could not be set: ${why}`));
               }}
             />
             <span>Send crash reports</span>
           </label>
+          {switchError && <p className="crash-reports-failed">{switchError}</p>}
           {!available && <p className="crash-reports-missing">This build has no address to send reports to.</p>}
           <p>
             A report is sent when the program runs into an error. It holds the error text and where in the program

@@ -143,7 +143,7 @@ portable folder.
 |---|---|
 | Captures | `captures\<date>_<time>_unit\` with `index.csv` and `session.log` (another folder if the selected profile sets `capture.out`) |
 | Saved profiles | `profiles\<name>.json`, with `.json.orig` / `.json.bak` copies of what was there before |
-| Log of all hardware jobs | `ila_log.txt` |
+| Log of all hardware jobs, and of the Python each start found (one line) | `ila_log.txt` |
 
 All of this is ignored by git; only the two shipped example profiles are tracked. The logs and the saved profiles
 contain local paths, the hw_server address and probe names: **read them before you share them.** The page also
@@ -314,7 +314,7 @@ GUI (React)  --invoke-->  Rust (async commands, never on the UI thread)
 | `no ILA core found on ...: Vivado sees the device but no debug hub in it` | The FPGA is not configured yet (right after power-up), its debug hub clock is not running, or the bitstream has no ILA / the `.ltx` belongs to another build. | Wait for the board to boot, load the matching bitstream / pick the matching `.ltx`. |
 | `the JTAG chain is empty` | The cable answers but sees no device. | Power the board. |
 | `probe X is not a probe of the selected ILA core (...): it belongs to core N ...` | The trigger names a probe of another ILA core of the design. | Select that core (chips under "Detected ILA Cores"), or choose a trigger probe of the selected core. |
-| `The Tcl script ... is older than this program` | The program was updated without its `scripts` folder, or the "Vivado Tcl Script" field names a copy from an earlier release. | Update the whole folder; clear the Tcl script field, and `tools.tcl_script` of the selected profile, which is used while the field is empty. |
+| `The Tcl script ... is older than this program` | The program was updated without its `scripts` folder, or the "Vivado Tcl Script" field names a copy from an earlier release. | Update the whole folder, and clear the Tcl script field: an empty field uses the bundled script, whatever the selected profile names. |
 | `not triggered within N min` | The trigger condition did not occur. | Raise the timeout or check the condition with a `Just Capture`. |
 
 ## Known limitations

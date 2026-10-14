@@ -35,7 +35,7 @@ clock. A **capture** is one filled buffer of one ILA core. The **program folder*
 
 The status line shows the progress of a running job. **View Output** (or **View Error Log** after a failure)
 next to it opens the output of the last job; Escape closes that window. **View Log (.txt)** opens
-`ila_log.txt`, the log of all hardware jobs, in Notepad. The status line, the log window, the footer of the
+`ila_log.txt`, the log of all hardware jobs (and of the Python each start found), in Notepad. The status line, the log window, the footer of the
 viewer and the probe names can be marked with the mouse and copied.
 
 **Demo Data** loads a simulated capture: 2,048 samples of 8 signals (`u_top/clk_en`, `u_top/fsm_state[3:0]`,
@@ -81,7 +81,9 @@ The card "Hardware & ILA Core Input".
   is shown after **Connect**. Both forms of the file are read: the XML form that Vivado 2017.4 writes and the
   JSON form of newer versions (a file that begins with `{ "ltx_root"`). A file that is neither is refused with
   "Failed to parse LTX".
-- **Vivado Tcl Script (.tcl)**: leave it empty to use the bundled `scripts\vivado_ila_repl.tcl`. A script
+- **Vivado Tcl Script (.tcl)**: leave it empty to use the bundled `scripts\vivado_ila_repl.tcl`. Selecting a
+  profile that names a script of its own (`tools.tcl_script`) fills the field; emptied again, the bundled
+  script is used. A script
   named here is run by Vivado, so name only a script you trust. A path that does not exist ends the job with
   `Tcl script not found: <path>`; the bundled script is not run in its place.
 - **hw_server URL**: `host:port`, e.g. `127.0.0.1:3121` for a hw_server on this PC or `192.0.2.10:3121` for a

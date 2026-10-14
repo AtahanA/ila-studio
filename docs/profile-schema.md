@@ -72,7 +72,7 @@ uses the same code to connect and to capture. "Page" means the capture tab of th
 | `xsct` | path | `C:\Xilinx\SDK\2019.1\bin\xsct.bat` | The xsct that watches the CPU. Used by the `hook` command only, and exactly as written: there is no search. |
 | `nm` | path | `C:\Xilinx\SDK\2019.1\gnu\aarch32\nt\gcc-arm-none-eabi\bin\arm-none-eabi-nm.exe` | Reads the address and size of the hook symbols from the ELF file. `hook`, and `check --elf`. No search. |
 | `objdump` | path | `C:\Xilinx\SDK\2019.1\gnu\aarch32\nt\gcc-arm-none-eabi\bin\arm-none-eabi-objdump.exe` | Finds the places where the hook function is called. `hook`, and `check --elf`. No search. |
-| `tcl_script` | path | none | A Tcl script of your own in place of `scripts\vivado_ila_repl.tcl`. Read by the GUI only: the page shows it in the field "Vivado Tcl Script (.tcl)", and a job that names no script (the field is empty) uses the one of the selected profile. If that file does not exist, the bundled script is used and the job says so, in its answer and in the log. A script that the field itself names and that does not exist ends the job: `Tcl script not found: <path>`. On the command line of `ila_capture.py` the option `--tcl` names the script, with the same error for a file that does not exist; the key is not read there. |
+| `tcl_script` | path | none | A Tcl script of your own in place of `scripts\vivado_ila_repl.tcl`. Read by the GUI only: selecting the profile puts it into the field "Vivado Tcl Script (.tcl)", and a job uses what that field holds - emptied, the bundled script, whatever the profile names. A script that the field itself names and that does not exist ends the job: `Tcl script not found: <path>`. On the command line of `ila_capture.py` the option `--tcl` names the script, with the same error for a file that does not exist; the key is not read there. |
 
 The defaults are the folders that Vivado 2017.4 and the SDK 2019.1 install into. They are only defaults: a
 profile for the `hook` command states `xsct`, `nm` and `objdump` of its own installation (SDK or Vitis).
@@ -257,8 +257,7 @@ and device filter (each only when its field is not empty; an empty field leaves 
 force), the ILA core, the JTAG clock, the trigger, position, timeout, export format, capture name and the
 probe formats.
 
-What a job from the GUI still uses of the selected profile: `tools.vivado`, `tools.tcl_script` while the Tcl
-script field is empty, `hardware.target_filter`, `capture.capture_mode`, `capture.out` and the `stats`
+What a job from the GUI still uses of the selected profile: `tools.vivado`, `hardware.target_filter`, `capture.capture_mode`, `capture.out` and the `stats`
 section. `capture.radix` and the `hook` section are not used.
 
 The profile is read from its file for every job. If the file is no longer there - renamed or deleted after

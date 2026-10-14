@@ -955,7 +955,8 @@ export function App() {
   const hardwareRequest = () => ({
     profile: selectedProfilePath || null,
     ltx: ltxPath || null,
-    tcl: tclPath || null,
+    // as the field has it, empty too: an emptied field asks for the bundled script although the profile names one
+    tcl: tclPath,
     server: serverUrl || null,
     device: deviceFilter || null,
     // The core: by its cell name, which is what it is chosen by on the device, and by position for where a name
