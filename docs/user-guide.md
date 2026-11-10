@@ -7,7 +7,8 @@ capture see the [project page](../README.md). The keys of a profile file are lis
 Words used here: a **probe file** is the `.ltx` file that Vivado writes for a bitstream; it names the ILA cores
 and their probes. **hw_server** is the Vivado program that the JTAG cable is attached to. **TCK** is the JTAG
 clock. A **capture** is one filled buffer of one ILA core. The **program folder** is the folder that holds
-`ila_bridge.py`: the root of the repository in a development build, `distribute\` in a portable folder.
+`ila_bridge.py`: the root of the repository in a development build, the portable folder when the program
+runs from one (`ila-studio-<version>-windows-x64\` unpacked from a release, or `distribute\`).
 
 ## Contents
 

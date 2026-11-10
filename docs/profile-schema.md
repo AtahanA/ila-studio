@@ -267,7 +267,8 @@ defaults in place of the profile.
 ## Relative paths
 
 "Program folder" is the folder that holds `ila_bridge.py` and `ila_capture.py`: the root of the repository in a
-development build, `distribute\` in a portable folder.
+development build, the portable folder when the program runs from one (`ila-studio-<version>-windows-x64\`
+unpacked from a release, or `distribute\`).
 
 | Path | In the GUI | On the command line of `ila_capture.py` |
 |---|---|---|

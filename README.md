@@ -77,6 +77,13 @@ To build:
 
 ## Quick start without hardware
 
+From a release: download `ila-studio-<version>-windows-x64.zip` from the
+[Releases page](https://github.com/AtahanA/ila-studio/releases), unpack it into a folder you can write to, and
+start `ila-studio.exe` in the folder `ila-studio-<version>-windows-x64` that it holds. The executable is not
+signed, so Windows may warn when it is started: see [SECURITY.md](SECURITY.md#releases).
+
+From the source:
+
 ```powershell
 git clone https://github.com/AtahanA/ila-studio.git
 cd ila-studio
@@ -84,9 +91,9 @@ npm ci
 npm run tauri dev
 ```
 
-The first start compiles a few hundred Rust crates and takes several minutes; later starts are much faster.
-When the window is up, click **Demo Data** (top right) and open the tab **Signal Analysis**. The demo needs
-Python, not Vivado.
+The first start from the source compiles a few hundred Rust crates and takes several minutes; later starts are
+much faster. When the window is up, click **Demo Data** (top right) and open the tab **Signal Analysis**. The
+demo needs Python, not Vivado.
 
 ![The capture page after Demo Data: hardware settings and capture modes on the left, the probe list on the right](docs/images/capture-page.png)
 
@@ -136,8 +143,9 @@ that executable yourself.
 
 ## Where data is written
 
-Everything is written next to `ila_bridge.py`: in the repository in a development build, in `distribute\` in a
-portable folder.
+Everything is written next to `ila_bridge.py`: in the repository in a development build, in the portable
+folder when the program runs from one (`ila-studio-<version>-windows-x64\` unpacked from a release, or
+`distribute\`).
 
 | What | Where |
 |---|---|
@@ -307,7 +315,7 @@ GUI (React)  --invoke-->  Rust (async commands, never on the UI thread)
 | `Vivado not found (tools.vivado is ...)` | Vivado is in none of the places that are searched. | Any one of these: put Vivado's `bin` folder on `PATH`; set `XILINX_VIVADO` to the installation folder; install under `Xilinx\Vivado` on `C:`, `D:` or `E:`; write the full path of `vivado.bat` as `tools.vivado` into a profile. |
 | `Failed to parse LTX: ...` | The file is not a probe file as Vivado writes one: neither the XML form nor the JSON form (which begins with `{ "ltx_root"`). What follows the colon says where reading it ended - or that the file is larger than 64 MB, the most a probe file is read up to. | Pick the `.ltx` that the implementation run wrote for the bitstream on the board. |
 | `the probe file does not name the debug hub clock, so TCK (...) was not limited to hub clock / 2.5`, in the message of a connect or a capture | With the JTAG clock on `Auto`: the probe file has no entry for the clock of the debug hub, so there was nothing to hold the cable's own frequency against. | Nothing, while the captures work. If the core stays IDLE, choose a JTAG clock at or below hub clock / 2.5 yourself. |
-| `ila_bridge.py was not found in ...` | The executable is not in the folder of the scripts: it was copied without them, or it is a local release build that was started directly. A release build does not look in other folders. | Keep `ila-studio.exe` in the folder that `make_distribute.ps1` made. Start a local release build with `run_gui.ps1`, or set `ILA_HOME` to the full path of the folder with the scripts. |
+| `ila_bridge.py was not found in ...` | The executable is not in the folder of the scripts: it was copied without them, or it is a local release build that was started directly. A release build does not look in other folders. | Keep `ila-studio.exe` in its folder with the scripts: the one unpacked from the release archive, or the one that `make_distribute.ps1` made. Start a local release build with `run_gui.ps1`, or set `ILA_HOME` to the full path of the folder with the scripts. |
 | `hw_server at ... is not reachable` | Wrong address, network, cable off. | Checked in 3 s before Vivado is started. Check the address and the cable. |
 | `[Common 17-70] Application Exception: bad enum default`, then no hardware targets | The cable runs at a TCK frequency Vivado cannot represent (a SmartLynq asked for 6 MHz reports 6034482 Hz), left behind by an earlier session while another client (e.g. an SDK debug session) kept the cable open. | Detected and repaired automatically (xsdb puts the cable back to 10 MHz, then the connect is retried). On a hw_server with several cables, every cable that runs at such a frequency is put back; where the selected profile names a cable with `hardware.target_filter`, only that one is. A cable that was left alone is named in the log (`TCK_LEFT`), and in the message when the connect still fails: it may then be the one in the way. Every session also restores the cable's frequency when it ends. Seen in ANOTHER Vivado while ILA Studio is connected: click Disconnect here first. |
 | `the ILA core does not run: it is still IDLE after being armed` | TCK too fast for the debug hub clock, or the ILA clock is stopped. In a session that has been open for a while: another program has changed the cable's JTAG clock. | Use `Auto` (or a frequency at or below hub clock / 2.5). Where the message says that the probe file does not name the hub clock, `Auto` has nothing to go by: choose the frequency yourself. A kept session reconnects by itself and tries the capture once more; otherwise Disconnect and Connect. |
@@ -330,7 +338,10 @@ GUI (React)  --invoke-->  Rust (async commands, never on the UI thread)
 - The search for a Vivado in the folder order of newer installers (`Xilinx\<version>\Vivado`) is written from
   the layout of such an installation and has not been run against one.
 - The last changes before this release (how addresses, paths and triggers are written into the Tcl commands
-  for Vivado) were checked against a Tcl interpreter and by the tests, not yet against Vivado itself.
+  for Vivado; that hook mode takes away a breakpoint it planted before the run ends; that the repair of
+  `bad enum default` keeps to the cable that `hardware.target_filter` names, where it names one) were checked
+  against a Tcl interpreter and stand-ins for the tools, and by the tests, not yet against Vivado, xsct or xsdb
+  themselves.
 - Untested: a program folder or a user profile whose path has spaces or non-ASCII characters. That Vivado and
   xsct are started correctly from a path with spaces or `&` - of the program folder, of a tool or of a Tcl
   script - was checked with stand-ins for the tools, not yet with the tools themselves. Not supported: `%` in
@@ -372,5 +383,6 @@ ILA Studio is built with [Tauri](https://tauri.app), [React](https://react.dev),
 [Lucide](https://lucide.dev) icons and, for the crash reports, the
 [Sentry SDK for Rust](https://github.com/getsentry/sentry-rust). Their licences, and those of the libraries they
 bring along, apply to binary distributions: every release archive holds `THIRD-PARTY-NOTICES.md`, which lists
-them with their licence texts. `python tools/third_party_notices.py` writes that file; see the release
+them with their licence texts (of Microsoft's WebView2 loader, which is linked into the executable, it gives
+only where that licence is found). `python tools/third_party_notices.py` writes that file; see the release
 checklist in [CONTRIBUTING.md](CONTRIBUTING.md#release-checklist).

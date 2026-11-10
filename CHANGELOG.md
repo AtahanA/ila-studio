@@ -4,7 +4,7 @@ All notable changes to ILA Studio are written down in this file. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - Unreleased
+## [0.4.0] - 2026-11-10
 
 First public release.
 
@@ -25,6 +25,8 @@ First public release.
 - Command line `ila_capture.py`: `check`, `info`, `capture`, `watch`, `hook`, `convert`, `stats`, `summary`.
 - Demo data for trying the interface without hardware.
 - Optional crash reports through Sentry, off until switched on in the header: an error of the program is
-  sent with user folders, the servers of network paths and IPv4 addresses taken out of its text. The choice
-  holds for one report server; a build from source has no report address.
+  sent with user folders, the servers of network paths, the names of this PC and of its Windows user (from
+  four characters on, where they stand as words of their own), and IPv4 and IPv6 addresses taken out of its
+  text; other names in it, such as those of probes and files, are sent as they stand. The choice holds for
+  one report server; a build from source has no report address.
 - Release archives built by a GitHub workflow from the tag, with `THIRD-PARTY-NOTICES.md` and a SHA-256 sum.

@@ -134,7 +134,7 @@ What you do:
    command (`cargo check` in `src-tauri`) carries it into `src-tauri/Cargo.lock`: commit that file too.
    `src-tauri/tauri.conf.json` has none: the application takes it from `Cargo.toml`.
 2. Write the entry in `CHANGELOG.md` and put the date of the release into its heading, as in
-   `## [0.4.0] - 2026-10-20` (the entry of 0.4.0 reads "Unreleased" until then). The entry becomes the text of
+   `## [0.4.0] - 2026-11-10` (an entry reads "Unreleased" until then). The entry becomes the text of
    the release.
 3. Commit, push, and wait until CI has passed on that commit.
 4. Tag the commit and push the tag: `git tag v<version>`, then `git push origin v<version>`.
