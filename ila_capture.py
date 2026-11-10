@@ -2439,7 +2439,13 @@ def cmd_stats(args, prof):
         w.writerow([name] + [st.get(k, "") for k in header])
 
 
-def main():
+class _Ambiguous(argparse.Action):
+    """An option that is there only to be refused, as an abbreviation of the options its const names."""
+    def __call__(self, parser, namespace, values, option_string=None):
+        parser.error("ambiguous option: %s could match %s" % (option_string, self.const))
+
+
+def make_parser():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     # The options of the whole tool may be given before or after the command: every command gets a copy of them.
     # A subparser writes its defaults over what the top parser has read, so the copy has none (SUPPRESS) - a
@@ -2463,6 +2469,14 @@ def main():
         a.add_argument("--trigger", help='"now" or "<probe> <compare-value>", e.g. "frame_start eq1\'bR"', **d)
         a.add_argument("--position", type=int, help="trigger position in samples", **d)
         a.add_argument("--format", choices=FILE_FORMATS, help="what to write per capture", **d)
+    # Older versions of Python (3.8 among them) look at every word with this parser, those after the command too,
+    # and refuse an abbreviation of several of its options before the command can read the word as its own; newer
+    # ones leave it to the command. --t and --p are such abbreviations here, and after a command they are its
+    # spellings of --trigger and --position (below). So they are spellings of their own here as well: before the
+    # command, --p is --profile, as it was before the whole tool took --position, and --t is refused, as it was.
+    ap.add_argument("--p", dest="profile", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    ap.add_argument("--t", action=_Ambiguous, const="--tcl, --target, --trigger", default=argparse.SUPPRESS,
+                    help=argparse.SUPPRESS)
     sp = ap.add_subparsers(dest="cmd", required=True)
     sp.add_parser("info", parents=[over])
     ck = sp.add_parser("check", parents=[over])
@@ -2503,7 +2517,11 @@ def main():
     v = sp.add_parser("convert", parents=[over]); v.add_argument("paths", nargs="+")
     u = sp.add_parser("summary", parents=[over]); u.add_argument("dir")
     t = sp.add_parser("stats", parents=[over]); t.add_argument("files", nargs="+")
-    args = ap.parse_args()
+    return ap
+
+
+def main():
+    args = make_parser().parse_args()
     for a in ("profile", "out", "ltx", "tcl", "server", "device", "ila_index", "jtag_hz", "trigger", "position",
               "format"):
         args.__dict__.setdefault(a, None)

@@ -3,6 +3,7 @@
 
 """The command lines. Hardware commands of ila_capture.py run in this process against the recorder that stands
 in for Vivado; the commands that need no hardware are started as real processes, from a copy of the scripts."""
+import argparse
 import csv
 import gzip
 import json
@@ -98,6 +99,34 @@ def test_abbreviations_of_one_letter_keep_the_meaning_they_had(vivado, cli, hard
     assert "ila_arm {frame_start eq1'bF} 7 UNSIGNED ALWAYS" in vivado
     assert vivado.started["vivado"][-1] == ic.resolve_tcl(None)      # the Tcl script and the target as they were
     assert all(session.name.endswith("_unit") for session in (tmp_path / "out").iterdir())
+
+
+def test_abbreviations_of_one_letter_before_the_command_keep_the_meaning_they_had(vivado, cli, hardware, write, capsys):
+    # --p meant --profile while the whole tool had no --position; --t fitted --tcl and --target and was refused
+    profile = write("p.json", json.dumps({"capture": {"position": 300}}))
+    assert cli("--p", profile, *hardware, "capture", "--name", "c") == 0
+    assert capture_commands(vivado)[0].endswith("} {now} 300 1 both UNSIGNED ALWAYS")
+    capsys.readouterr()
+    assert cli("--t", "x", *hardware, "capture", "--name", "c") == 2
+    assert "ambiguous option: --t could match --tcl, --target, --trigger" in capsys.readouterr().err
+
+
+def test_no_option_of_a_command_is_an_ambiguous_abbreviation_for_the_whole_tool():
+    # Python 3.8 has the parser of the whole tool look at every word, those after the command too, and refuse one
+    # that is an abbreviation of several of its options, before the command could read it as one of its own: every
+    # abbreviation a command takes must be an option of the whole tool or fit at most one of them.
+    # (_actions and choices are not documented, but the same in every version of argparse that is supported.)
+    top = ic.make_parser()
+    own = [s for a in top._actions for s in a.option_strings]
+    (commands,) = [a.choices for a in top._actions if isinstance(a, argparse._SubParsersAction)]
+    refused = set()
+    for name, command in commands.items():
+        for option in (s for a in command._actions for s in a.option_strings if s.startswith("--")):
+            for end in range(3, len(option) + 1):
+                word = option[:end]
+                if word not in own and len([s for s in own if s.startswith(word)]) > 1:
+                    refused.add((name, word))
+    assert not refused
 
 
 def test_session_is_called_unit_when_no_target_is_given(vivado, cli, hardware, tmp_path):
