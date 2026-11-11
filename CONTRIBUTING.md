@@ -88,7 +88,8 @@ you change a command that is sent to Vivado or xsct, show the command before and
   (`src-tauri/capabilities/default.json`). A new Tauri plugin or another kind of dialog needs an entry there.
   `window.alert()` and `window.confirm()` do not work.
 - The application icon is `src/assets/app-icon.svg`. The icons in `src-tauri/icons` are made from it with
-  `npx tauri icon src/assets/app-icon.svg`; delete the folders `android` and `ios` it also writes.
+  `npx tauri icon src/assets/app-icon.svg`; delete the folders `android` and `ios` it also writes. The README
+  shows a copy of `src-tauri/icons/128x128@2x.png` as `docs/images/icon.png`: copy it again after that.
 
 ## Keep private data out
 

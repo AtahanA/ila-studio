@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/images/icon.png" alt="" width="112" height="112">
+<img src="docs/images/icon.png" alt="ILA Studio icon" width="112" height="112">
 
 # ILA Studio
 
@@ -414,7 +414,7 @@ checklist in [CONTRIBUTING.md](CONTRIBUTING.md#release-checklist).
 
 <!-- The badges at the top of this page. CI and the release are read from GitHub. The others are fixed texts
      that repeat what Status and Requirements say: change them together. -->
-[badge-ci]: https://img.shields.io/github/actions/workflow/status/AtahanA/ila-studio/ci.yml?branch=main&label=CI&logo=github&logoColor=white
+[badge-ci]: https://img.shields.io/github/actions/workflow/status/AtahanA/ila-studio/ci.yml?branch=main&event=push&label=CI&logo=github&logoColor=white
 [badge-release]: https://img.shields.io/github/v/release/AtahanA/ila-studio?label=release
 [badge-licence]: https://img.shields.io/badge/licence-GPL--3.0--or--later-blue
 [badge-platform]: https://img.shields.io/badge/platform-Windows-0078D4
