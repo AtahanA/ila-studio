@@ -1,4 +1,29 @@
+<div align="center">
+
+<img src="docs/images/icon.png" alt="" width="112" height="112">
+
 # ILA Studio
+
+Capture and analysis GUI for Vivado ILA (Integrated Logic Analyzer) cores
+
+[![CI][badge-ci]][ci]
+[![Latest release][badge-release]][releases]
+[![Licence: GPL-3.0-or-later][badge-licence]](LICENSE)
+[![Platform: Windows][badge-platform]](#requirements)
+
+[![Vivado: tested with 2017.4][badge-vivado]](#status)
+[![Python 3.8 or newer][badge-python]](#requirements)
+[![Tauri 2][badge-tauri]][tauri]
+[![React 19][badge-react]][react]
+[![Rust 1.90 or newer][badge-rust]](#requirements)
+
+[Quick start](#quick-start-without-hardware) &middot;
+[First capture](#first-capture-with-hardware) &middot;
+[User guide](docs/user-guide.md) &middot;
+[Troubleshooting](#troubleshooting) &middot;
+[Changelog](CHANGELOG.md)
+
+</div>
 
 ILA Studio is a Windows desktop application for FPGA engineers who debug with the ILA (Integrated Logic
 Analyzer) cores of AMD Vivado (formerly Xilinx). It reads the probe file of a design, sets a trigger, takes
@@ -386,3 +411,19 @@ bring along, apply to binary distributions: every release archive holds `THIRD-P
 them with their licence texts (of Microsoft's WebView2 loader, which is linked into the executable, it gives
 only where that licence is found). `python tools/third_party_notices.py` writes that file; see the release
 checklist in [CONTRIBUTING.md](CONTRIBUTING.md#release-checklist).
+
+<!-- The badges at the top of this page. CI and the release are read from GitHub. The others are fixed texts
+     that repeat what Status and Requirements say: change them together. -->
+[badge-ci]: https://img.shields.io/github/actions/workflow/status/AtahanA/ila-studio/ci.yml?branch=main&label=CI&logo=github&logoColor=white
+[badge-release]: https://img.shields.io/github/v/release/AtahanA/ila-studio?label=release
+[badge-licence]: https://img.shields.io/badge/licence-GPL--3.0--or--later-blue
+[badge-platform]: https://img.shields.io/badge/platform-Windows-0078D4
+[badge-vivado]: https://img.shields.io/badge/Vivado-tested%20with%202017.4-6E40C9
+[badge-python]: https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white
+[badge-tauri]: https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri&logoColor=white
+[badge-react]: https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white
+[badge-rust]: https://img.shields.io/badge/Rust-1.90%2B-CE422B?logo=rust&logoColor=white
+[ci]: https://github.com/AtahanA/ila-studio/actions/workflows/ci.yml
+[releases]: https://github.com/AtahanA/ila-studio/releases
+[tauri]: https://tauri.app
+[react]: https://react.dev
